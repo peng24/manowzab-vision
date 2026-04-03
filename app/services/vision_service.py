@@ -30,10 +30,10 @@ def variance_of_laplacian(frame_bgr: np.ndarray) -> float:
 
 # ─── Frame Scoring ─────────────────────────────────────────────────────────
 
-def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> float:
+def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> tuple[float, np.ndarray]:
     sharpness = variance_of_laplacian(frame_bgr)
     if sharpness < settings.blur_threshold:
-        return 0.0
+        return 0.0, frame_bgr
 
     results = yolo_model(
         frame_bgr,
@@ -44,10 +44,12 @@ def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> float:
     confs = [float(box.conf) for r in results for box in r.boxes]
     highest_conf = max(confs) if confs else 0.0
     
+    annotated = results[0].plot()
+    
     if highest_conf < 0.60:
-        return 0.0
+        return 0.0, annotated
 
-    return sharpness * highest_conf
+    return sharpness * highest_conf, annotated
 
 
 def get_live_m3u8(youtube_url: str) -> str:
@@ -142,16 +144,37 @@ class ContinuousVisionBuffer:
                 ret, frame = cap.retrieve()
                 if ret and frame is not None:
                     last_score_time = now
-                    s = score_frame(frame, self.yolo_model)
+                    s, annotated = score_frame(frame, self.yolo_model)
+                    
+                    # Pre-encode JPEG for the MJPEG stream to save CPU
+                    ret_enc, buffer_enc = cv2.imencode('.jpg', annotated)
+                    frame_bytes = buffer_enc.tobytes() if ret_enc else None
                     
                     # ロックก่อนจัดการคิว
                     with self.lock:
                         # ถึงคะแนนต่ำกว่า 60% ก็เก็บเผื่อไว้ก่อน (เผื่อแม่ค้าบังยาว) 
                         # พอของชิ้นใหม่มา เราจะเอารูปคะแนนสูงสุด เท่าที่มีใน 15 วิมาใช้
                         self.frame_buffer.append((now, s, frame))
+                        self.latest_frame_bytes = frame_bytes
                         
         cap.release()
         logger.info("[Vision] 🛑 หยุด Continuous Frame Buffer เรียบร้อย")
+
+    def generate_mjpeg_stream(self):
+        """Generator สำหรับส่งภาพแบบ MJPEG"""
+        while not self.stop_event.is_set():
+            frame_bytes = None
+            with self.lock:
+                if hasattr(self, 'latest_frame_bytes') and self.latest_frame_bytes is not None:
+                    frame_bytes = self.latest_frame_bytes
+            
+            if frame_bytes is None:
+                time.sleep(0.1)
+                continue
+                
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            time.sleep(0.1)  # 10 FPS
 
     def get_best_frame_and_save(self, item_code: int, prefix: str = "") -> Path | None:
         """

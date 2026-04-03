@@ -372,11 +372,10 @@
     <div id="video-wrapper">
       <div id="video-placeholder">
         <div class="ph-icon">📺</div>
-        <div>กรอก URL แล้วกด <strong>ปุ่ม ▶ เริ่ม</strong><br>เพื่อดู Live Preview</div>
+        <div>กรอก URL แล้วกด <strong>ปุ่ม ▶ เริ่ม</strong><br>เพื่อดู AI Live Vision</div>
       </div>
-      <div id="live-iframe" style="width:100%; height:100%; display:none;"></div>
-      <div id="live-badge"><div class="live-dot"></div> LIVE</div>
-      <button id="mute-btn" onclick="toggleMute()" style="display:none;">🔇 เปิดเสียง</button>
+      <img id="ai-stream-img" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" style="width:100%; height:100%; object-fit:contain; display:none; background:#000;" />
+      <div id="live-badge" style="background:#7c6ef5; padding:6px 14px;"><div class="live-dot"></div> 🤖 AI Live Vision</div>
     </div>
 
     <div id="video-meta">
@@ -500,80 +499,25 @@
     }, 3200);
   }
 
-  // ── YouTube Video ID ───────────────────────────────────────────────────────
-  function extractVideoId(url) {
-    const patterns = [
-      /(?:v=|youtu\.be\/|embed\/|live\/)([A-Za-z0-9_-]{11})/,
-      /^([A-Za-z0-9_-]{11})$/,
-    ];
-    for (const p of patterns) {
-      const m = url.match(p);
-      if (m) return m[1];
-    }
-    return null;
-  }
-
   function loadVideoPreview(url) {
-    const vid = extractVideoId(url);
-    if (!vid || vid === currentVidId) return;
-    currentVidId = vid;
+    if (!url) return;
 
     const ph = document.getElementById('video-placeholder');
     ph.style.display = 'none';
     
-    // Check if element is already an iframe (YT API replaced it)
-    let iframeEl = document.getElementById('live-iframe');
-    if (iframeEl) {
-        iframeEl.style.display = 'block';
+    let imgEl = document.getElementById('ai-stream-img');
+    if (imgEl) {
+        imgEl.style.display = 'block';
+        imgEl.src = `${API}/vision/stream?t=${Date.now()}`;
     }
 
-    document.getElementById('mute-btn').style.display = 'block';
     document.getElementById('live-badge').classList.add('show');
-    iframeLoaded = true;
-    log(`โหลด video preview: ${vid}`, 'info');
-
-    if (ytPlayer) {
-      ytPlayer.loadVideoById(vid);
-      if (isMuted) ytPlayer.mute(); else ytPlayer.unMute();
-    } else {
-      ytPlayer = new YT.Player('live-iframe', {
-        videoId: vid,
-        playerVars: { 
-          'autoplay': 1, 
-          'mute': isMuted ? 1 : 0, 
-          'rel': 0, 
-          'modestbranding': 1,
-          'controls': 1
-        },
-        events: {
-          'onReady': function(event) {
-            if (isMuted) event.target.mute(); else event.target.unMute();
-          }
-        }
-      });
-    }
+    log(`โหลด AI Live Vision Stream`, 'info');
   }
 
   function reloadVideo() {
     const url = document.getElementById('url-input').value.trim();
-    currentVidId = '';
     loadVideoPreview(url);
-  }
-
-  function toggleMute() {
-    isMuted = !isMuted;
-    const btn = document.getElementById('mute-btn');
-    btn.textContent = isMuted ? '🔇 เปิดเสียง' : '🔊 ปิดเสียง';
-
-    if (ytPlayer && typeof ytPlayer.mute === 'function') {
-      if (isMuted) {
-        ytPlayer.mute();
-      } else {
-        ytPlayer.unMute();
-      }
-    }
-    
-    log(isMuted ? '🔇 ปิดเสียงแล้ว' : '🔊 เปิดเสียงแล้ว', 'plain');
   }
 
   // ── Status Polling ─────────────────────────────────────────────────────────
@@ -642,12 +586,13 @@
       } else {
         toast('Pipeline หยุดแล้ว', 'warn');
         log('Pipeline หยุด', 'warn');
-        if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
-        document.getElementById('live-iframe').style.display = 'none';
+        const imgEl = document.getElementById('ai-stream-img');
+        if (imgEl) {
+            imgEl.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+            imgEl.style.display = 'none';
+        }
         document.getElementById('video-placeholder').style.display = 'flex';
         document.getElementById('live-badge').classList.remove('show');
-        document.getElementById('mute-btn').style.display = 'none';
-        currentVidId = '';
       }
     }
     prevRunning = running;

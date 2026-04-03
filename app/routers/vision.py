@@ -14,7 +14,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, HttpUrl, field_validator
 
 from app.config import settings
@@ -148,30 +148,56 @@ async def get_status() -> StatusResponse:
 
 
 @router.get(
+    "/stream", 
+    summary="รับภาพ MJPEG Stream จาก AI"
+)
+async def get_video_stream():
+    """
+    คืนค่า MJPEG Stream ของภาพล่าสุดที่ถูกตีกรอบโดย YOLO
+    """
+    if not stream_manager.is_running or not stream_manager._vision_buffer:
+        raise HTTPException(status_code=503, detail="Pipeline or Vision Buffer is not running")
+        
+    return StreamingResponse(
+        stream_manager._vision_buffer.generate_mjpeg_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@router.get(
     "/captured/{item_code}",
     summary="ดาวน์โหลดภาพสินค้าที่จับไว้",
     response_class=FileResponse,
 )
-async def get_captured_image(item_code: int) -> FileResponse:
+async def get_captured_image(item_code: str) -> FileResponse:
     """
-    คืนไฟล์ภาพ JPEG ของสินค้าตาม item_code
-    ค้นหาแบบ recursive ทั่วทั้งโฟลเดอร์ภาพ เช่น {prefix}_{item_code}.jpg
+    คืนไฟล์ภาพ JPEG ของสินค้าตาม item_code โดยรองรับการค้นหาแบบมี Prefix นำหน้า
     """
-    found_path = None
-    for p in settings.output_dir.rglob("*.jpg"):
-        if p.name == f"{item_code}.jpg" or p.name.endswith(f"_{item_code}.jpg"):
-            found_path = p
-            break
-            
-    if not found_path:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"ยังไม่มีภาพสินค้า #{item_code}",
+    item_code = item_code.strip()
+    target_dir = settings.output_dir
+    
+    # Method 1: Exact Match
+    exact_path = target_dir / f"{item_code}.jpg"
+    if exact_path.exists():
+        return FileResponse(
+            path=str(exact_path),
+            media_type="image/jpeg",
+            filename=exact_path.name,
         )
-    return FileResponse(
-        path=str(found_path),
-        media_type="image/jpeg",
-        filename=found_path.name,
+        
+    # Method 2: Prefix Match (ค้นหาแบบ recursive ด้วย rglob เผื่อภาพอยู่ในซับโฟลเดอร์)
+    matches = list(target_dir.rglob(f"*_{item_code}.jpg"))
+    if matches:
+        first_match = matches[0]
+        return FileResponse(
+            path=str(first_match),
+            media_type="image/jpeg",
+            filename=first_match.name,
+        )
+        
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"ยังไม่มีภาพสินค้า #{item_code}",
     )
 
 
