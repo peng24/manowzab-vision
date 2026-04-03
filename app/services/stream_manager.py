@@ -29,7 +29,7 @@ from ultralytics import YOLO
 
 from app.config import settings
 from app.utils.nlp import LiveDataExtractor
-from app.services.vision_service import trigger_capture
+from app.services.vision_service import ContinuousVisionBuffer
 from app.services.webhook_service import send_product_event
 
 logger = logging.getLogger(__name__)
@@ -101,22 +101,21 @@ def _audio_producer(
 
 def _transcribe_worker(
     whisper_model: WhisperModel,
-    yolo_model: YOLO,
+    vision_buffer: ContinuousVisionBuffer,
     audio_queue: queue.Queue,
-    youtube_url: str,
-    video_url: str,
     stop_event: threading.Event,
     capture_lock: threading.Lock,
     captured_codes: set[int],
     session_id: str,
     on_transcript: Callable[[str], None] | None,
     extractor: LiveDataExtractor,
+    session_date_str: str,
 ) -> None:
     """
     Loop หลัก:
       audio chunk → Whisper → extract_product_data()
-        → trigger_capture() [non-blocking]
-          → on_complete callback → send_product_event() [webhook]
+        → vision_buffer.get_best_frame_and_save() [synchronous from Memory]
+          → send_product_event() [webhook]
     """
     logger.info("[Transcribe] 📝  เริ่มทำงาน (VAD=off, CPU-safe mode)")
 
@@ -148,6 +147,7 @@ def _transcribe_worker(
                 vad_filter=False,           # ❌ ปิด VAD — กรองเสียงไทยออกหมด
                 condition_on_previous_text=True,
                 temperature=0.0,            # Greedy decode — เร็วและ stable
+                initial_prompt="รายการที่ 1 รหัส 2 ตัวที่ 3 ราคา 50 บาท 100 บาท ร้อยนึง เอฟเสื้อ",
             )
 
             texts = [seg.text.strip() for seg in segments if seg.text.strip()]
@@ -176,31 +176,25 @@ def _transcribe_worker(
                 if status == "conflict":
                     logger.warning("[Review] 🚨  Price Conflict item=#%d (ก่อน: %s, ใหม่: %s)", 
                                    item_code, product.get("old_price"), price)
-                    # ยิง Webhook แบบส่งข้อมูลขัดแย้งเลย ไม่ต้องอัปรูปซ้ำ
-                    send_product_event(product=product, image_path=None, session_id=session_id)
+                    send_product_event(
+                        product=product, image_path=None, session_id=session_id, date_str=session_date_str
+                    )
                     continue
 
                 if item_code in captured_codes:
-                    # ถ้า review แต่ราคาเดิม หรือจับไปแล้ว ไม่ต้องถ่ายรูป
                     continue
                     
                 captured_codes.add(item_code)
 
-            # callback ที่รันหลัง capture เสร็จ → ส่ง webhook
-            def _on_capture_done(code: int, saved_path: Path | None) -> None:
-                send_product_event(
-                    product=product,
-                    image_path=saved_path,
-                    session_id=session_id,
-                )
-
-            trigger_capture(
-                youtube_url=youtube_url,
-                video_url=video_url,
-                item_code=item_code,
-                yolo_model=yolo_model,
-                stop_event=stop_event,
-                on_complete=_on_capture_done,
+            # ให้ Buffer ดึงรูปย้อนหลังที่คะแนนดีที่สุดมาบันทึกลง disk ทันที
+            saved_path = vision_buffer.get_best_frame_and_save(item_code, session_date_str)
+            
+            # ยิง Webhook หลังจากดึงภาพสำเร็จ
+            send_product_event(
+                product=product,
+                image_path=saved_path,
+                session_id=session_id,
+                date_str=session_date_str,
             )
 
         except RuntimeError as exc:
@@ -247,6 +241,8 @@ class StreamManager:
         self._session_id:   str = ""
         self._youtube_url:  str = ""
         self._started_at:   float | None = None
+        self._vision_buffer: ContinuousVisionBuffer | None = None
+        self._session_date_str: str = ""
 
     # ── Model Loaders ────────────────────────────────────────────────────
 
@@ -307,8 +303,18 @@ class StreamManager:
         self._youtube_url    = youtube_url
         self._started_at     = time.time()
         self._extractor      = LiveDataExtractor()
+        
+        # วันที่และปี พ.ศ. ของ Session นี้เพื่อใช้เป็นชื่อโฟลเดอร์ (ex: 1-4-69)
+        from datetime import datetime
+        now = datetime.now()
+        year_be = str(now.year + 543)[-2:]
+        self._session_date_str = f"{now.day}-{now.month}-{year_be}"
 
         audio_queue = queue.Queue(maxsize=10)
+
+        # เริ่ม Vision Buffer (4 FPS)
+        self._vision_buffer = ContinuousVisionBuffer(self._yolo, buffer_seconds=15, fps=4)
+        self._vision_buffer.start(video_url, self._youtube_url)
 
         self._t_audio = threading.Thread(
             target=_audio_producer,
@@ -320,16 +326,15 @@ class StreamManager:
             target=_transcribe_worker,
             args=(
                 self._whisper,
-                self._yolo,
+                self._vision_buffer,   
                 audio_queue,
-                self._youtube_url,
-                video_url,
                 self._stop_event,
                 self._capture_lock,
                 self._captured_codes,
                 session_id,
                 None,          # on_transcript callback (None = log เท่านั้น)
                 self._extractor,
+                self._session_date_str,
             ),
             daemon=True,
             name="transcribe-worker",
@@ -343,6 +348,8 @@ class StreamManager:
         """หยุด pipeline — thread จะเสร็จสิ้นภายใน 5 วินาที"""
         if self._stop_event:
             self._stop_event.set()
+        if self._vision_buffer:
+            self._vision_buffer.stop()
         if self._t_audio and self._t_audio.is_alive():
             self._t_audio.join(timeout=5)
         if self._t_transcribe and self._t_transcribe.is_alive():

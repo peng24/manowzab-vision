@@ -40,9 +40,9 @@ def _build_payload(
 
 import json
 
-def _save_local_result(payload: dict) -> None:
+def _save_local_result(payload: dict, date_str: str) -> None:
     """บันทึกข้อมูลลงไฟล์ results.json ในโฟลเดอร์ภาพ"""
-    output_dir = settings.output_dir
+    output_dir = settings.output_dir / date_str
     output_dir.mkdir(parents=True, exist_ok=True)
     results_file = output_dir / "results.json"
 
@@ -73,6 +73,7 @@ def send_product_event(
     product: dict,
     image_path: Path | None,
     session_id: str,
+    date_str: str,
 ) -> None:
     """
     บันทึกผลลงไฟล์ในเครื่อง (results.json)
@@ -81,4 +82,4 @@ def send_product_event(
     payload = _build_payload(product, image_path, session_id)
     
     # 1. เก็บรูปลงเครื่องอยู่แล้ว + เพิ่มการเก็บ JSON ลงเครื่อง
-    _save_local_result(payload)
+    _save_local_result(payload, date_str)

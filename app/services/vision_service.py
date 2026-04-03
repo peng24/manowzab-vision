@@ -1,20 +1,18 @@
 """
 app/services/vision_service.py
 ─────────────────────────────────────────────────────────────────
-Computer Vision Pipeline:
+Computer Vision Pipeline (Continuous Buffer Architecture):
   - variance_of_laplacian()  → วัด sharpness ของเฟรม
-  - score_frame()            → ให้คะแนนเฟรม (sharpness × YOLO bonus)
-  - capture_best_frame()     → บันทึกเฟรมที่ดีที่สุดใน CAPTURE_DURATION วินาที
-  - trigger_capture()        → spawn daemon thread (non-blocking)
+  - score_frame()            → ให้คะแนนเฟรม (sharpness × YOLO highest_confidence)
+  - ContinuousVisionBuffer   → Class จัดการ Background Thread เก็บภาพ 10-15s ล่าสุด
 """
 from __future__ import annotations
 
+import collections
 import logging
-import subprocess
 import threading
 import time
 from pathlib import Path
-import yt_dlp
 
 import cv2
 import numpy as np
@@ -24,32 +22,19 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 # ─── Sharpness Metric ──────────────────────────────────────────────────────
 
 def variance_of_laplacian(frame_bgr: np.ndarray) -> float:
-    """
-    คำนวณ sharpness ด้วย Variance of Laplacian
-    ค่าสูง = คมชัด / ค่าต่ำ = เบลอ
-    """
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
 
 # ─── Frame Scoring ─────────────────────────────────────────────────────────
 
 def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> float:
-    """
-    ให้คะแนนเฟรม:
-      score = sharpness × highest_confidence (ความมั่นใจของ AI ว่าเจอเสื้อ)
-
-    เฟรมที่ sharpness < BLUR_THRESHOLD หรือหาเสื้อไม่เจอ จะได้ score = 0 (ตัดทิ้ง)
-    """
     sharpness = variance_of_laplacian(frame_bgr)
     if sharpness < settings.blur_threshold:
         return 0.0
 
-    # ให้ AI หาเสื้อที่เราเทรนมา (ไม่ต้องระบุ classes=[0] แล้ว เพราะโมเดลเรามีแค่คลาสเสื้อคลาสเดียว)
     results = yolo_model(
         frame_bgr,
         verbose=False,
@@ -57,19 +42,12 @@ def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> float:
     )
     
     confs = [float(box.conf) for r in results for box in r.boxes]
-    
-    # ดึงค่าความมั่นใจสูงสุดที่ AI หาเสื้อเจอ
     highest_conf = max(confs) if confs else 0.0
     
-    # ถ้า AI ไม่เจอเสื้อเลย หรือเจอแต่มั่นใจน้อยกว่า 60% (เช่น ถูกแม่ค้าบัง) ให้ข้ามเฟรมนี้ไป
     if highest_conf < 0.60:
         return 0.0
 
-    # เอาคะแนนความคมชัดคูณกับความมั่นใจของ AI ยิ่งชัดและ AI มั่นใจมาก คะแนนยิ่งพุ่งสูงปรี๊ด
     return sharpness * highest_conf
-
-
-# ─── Capture Worker ────────────────────────────────────────────────────────
 
 
 def get_live_m3u8(youtube_url: str) -> str:
@@ -83,118 +61,128 @@ def get_live_m3u8(youtube_url: str) -> str:
         logger.warning("YT-DLP get_live_m3u8 error: %s", e)
         return ""
 
-import shutil
-import urllib.request
-import urllib.parse
 
-def _extract_video_id(url: str) -> str | None:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.hostname in ('youtu.be', 'www.youtu.be'):
-        return parsed.path[1:]
-    if parsed.hostname in ('youtube.com', 'www.youtube.com'):
-        if parsed.path == '/watch':
-            qs = urllib.parse.parse_qs(parsed.query)
-            return qs.get('v', [None])[0]
-        if parsed.path.startswith('/live/'):
-            return parsed.path.split('/')[2]
-    return None
+# ─── Continuous Buffer Manager ─────────────────────────────────────────────
 
-def capture_best_frame(
-    youtube_url: str,
-    video_url: str,
-    item_code: int,
-    yolo_model: YOLO,
-    stop_event: threading.Event,
-    on_complete: "Callable[[int, Path | None], None] | None" = None,
-) -> Path | None:
-    output_dir: Path = settings.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"{item_code}.jpg"
-
-    logger.info("[Vision] 📷 เริ่มจับภาพ item=#%d ตรงลง /%s", item_code, output_dir.name)
-
-    # 1. แคปภาพ 1 เฟรมตรงๆ 
-    cmd = [
-        "ffmpeg", "-y", "-loglevel", "quiet",
-        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
-        "-i", video_url,
-        "-vframes", "1",
-        "-q:v", "2",
-        str(out_path)
-    ]
-
-    try:
-        subprocess.run(cmd, timeout=12)
-    except subprocess.TimeoutExpired:
-        logger.warning("[Vision] ⚠️ Timeout จาก FFmpeg")
-    except Exception as e:
-        logger.error("[Vision] ❌ FFmpeg error: %s", e)
-
-    # 2. ถ้าไม่ได้ภาพ (ลิงก์อาจตายหรือเป็นแค่ audio-only) ลองให้ yt-dlp ดึง URL ใหม่
-    if not out_path.exists():
-        logger.warning("[Vision] ⚠️ FFmpeg ไม่ได้ภาพ (ลิงก์หลักพัง/ไม่มีภาพ) ขอดึงลิงก์ YouTube ใหม่...")
-        fresh_url = get_live_m3u8(youtube_url)
-        if fresh_url:
-            cmd[11] = fresh_url # index ของ video_url
-            try:
-                subprocess.run(cmd, timeout=12)
-            except:
-                pass
-
-    # 3. ถ้ายังไม่ได้อีก (เช่น yt-dlp แจ้ง JS Runtime missing) ให้โหลด Live Thumbnail
-    if not out_path.exists():
-        logger.warning("[Vision] ⚠️ FFmpeg พังหมด! ดึง Live Thumbnail ของช่องมาแก้ขัดแทน")
-        vid = _extract_video_id(youtube_url)
-        if vid:
-            urls = [
-                f"https://i.ytimg.com/vi/{vid}/maxresdefault_live.jpg",
-                f"https://i.ytimg.com/vi/{vid}/hqdefault_live.jpg"
-            ]
-            for tu in urls:
-                try:
-                    urllib.request.urlretrieve(tu, str(out_path))
-                    break
-                except:
-                    pass
-
-    # บันทึกภาพ พร้อมกับประเมินคะแนนเพื่อเก็บเป็น Log ตามโมเดล
-    saved: Path | None = None
-    if out_path.exists():
-        frame = cv2.imread(str(out_path))
-        if frame is not None:
-            s = score_frame(frame, yolo_model)
-            logger.info("[Vision] 📸 บันทึกภาพเสร็จสิ้น → %s (score=%.1f)", out_path.name, s)
-            saved = out_path
-        else:
-            logger.warning("[Vision] ⚠️ ไฟล์เสีย ลบออก")
-            out_path.unlink(missing_ok=True)
-    else:
-        logger.warning("[Vision] ⚠️ ไม่ได้เฟรมภาพสำหรับ item=#%d สตรีมอาจจะหยุดไปแล้ว", item_code)
-
-    if on_complete:
-        on_complete(item_code, saved)
-    return saved
-
-
-# ─── Non-blocking Trigger ──────────────────────────────────────────────────
-
-def trigger_capture(
-    youtube_url: str,
-    video_url: str,
-    item_code: int,
-    yolo_model: YOLO,
-    stop_event: threading.Event,
-    on_complete: "Callable[[int, Path | None], None] | None" = None,
-) -> threading.Thread:
+class ContinuousVisionBuffer:
     """
-    เรียก capture_best_frame ใน daemon thread แยก
-    คืน thread object เพื่อให้ caller .join() ได้ถ้าต้องการ
+    ดึงภาพจาก Stream ตลอดเวลาใส่ไว้ใน Deque Buffer อย่างจำกัด
     """
-    t = threading.Thread(
-        target=capture_best_frame,
-        args=(youtube_url, video_url, item_code, yolo_model, stop_event, on_complete),
-        daemon=True,
-        name=f"vision-item{item_code}",
-    )
-    t.start()
-    return t
+    def __init__(self, yolo_model: YOLO, buffer_seconds: int = 15, fps: int = 4):
+        self.yolo_model = yolo_model
+        self.buffer_seconds = buffer_seconds
+        self.fps = fps
+        self.max_frames = buffer_seconds * fps
+        
+        # ใช้ deque พร้อม maxlen ป้องกัน Memory Leak เด็ดขาด (จำกัดรูปตาม Queue Size)
+        self.frame_buffer = collections.deque(maxlen=self.max_frames)
+        self.lock = threading.Lock()
+        
+        self.stop_event = threading.Event()
+        self.worker_thread: threading.Thread | None = None
+        self.video_url: str = ""
+        self.youtube_url: str = ""
+
+    def start(self, video_url: str, youtube_url: str):
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+            
+        self.video_url = video_url
+        self.youtube_url = youtube_url
+        self.stop_event.clear()
+        
+        with self.lock:
+            self.frame_buffer.clear()
+            
+        self.worker_thread = threading.Thread(
+            target=self._capture_loop,
+            daemon=True,
+            name="vision-buffer-worker"
+        )
+        self.worker_thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=5)
+
+    def _capture_loop(self):
+        logger.info("[Vision] 📽️ เริ่ม Continuous Frame Buffer (%d FPS, จุสูงสุด %d รูป)", 
+                    self.fps, self.max_frames)
+        
+        cap = cv2.VideoCapture(self.video_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        
+        last_score_time = 0.0
+        frame_interval = 1.0 / self.fps
+        
+        while not self.stop_event.is_set():
+            # อ่านเฉพาะ header เพื่อให้ stream เดินหน้าแบบ Real-time (ล้างคิวภาพเก่าทิ้ง)
+            ret = cap.grab()
+            
+            if not ret:
+                logger.warning("[Vision] ⚠️ สตรีมภาพสะดุดหรือลิงก์หมดอายุ กำลังเชื่อมต่อใหม่...")
+                cap.release()
+                
+                # ลิงก์อาจจะหมดอายุ ลองดึงใหม่ผ่าน yt-dlp
+                fresh_url = get_live_m3u8(self.youtube_url)
+                if fresh_url:
+                    self.video_url = fresh_url
+                    
+                time.sleep(2)
+                if self.stop_event.is_set(): break
+                
+                cap = cv2.VideoCapture(self.video_url)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+                continue
+
+            now = time.time()
+            # ตัดสินใจดึงภาพมาประมวลผล (Retrieve) ตาม FPS ที่กำหนด
+            if now - last_score_time >= frame_interval:
+                ret, frame = cap.retrieve()
+                if ret and frame is not None:
+                    last_score_time = now
+                    s = score_frame(frame, self.yolo_model)
+                    
+                    # ロックก่อนจัดการคิว
+                    with self.lock:
+                        # ถึงคะแนนต่ำกว่า 60% ก็เก็บเผื่อไว้ก่อน (เผื่อแม่ค้าบังยาว) 
+                        # พอของชิ้นใหม่มา เราจะเอารูปคะแนนสูงสุด เท่าที่มีใน 15 วิมาใช้
+                        self.frame_buffer.append((now, s, frame))
+                        
+        cap.release()
+        logger.info("[Vision] 🛑 หยุด Continuous Frame Buffer เรียบร้อย")
+
+    def get_best_frame_and_save(self, item_code: int, date_str: str) -> Path | None:
+        """
+        เมื่อได้ยินรหัสสินค้า ดึงหน้าภาพย้อนหลัง (Retrospective) ทันที (0.1s)
+        และเคลียคิวเพื่อไม่ให้ตั๋วใบถัดไปรับภาพนี้ซ้ำ
+        """
+        logger.info("[Vision] 🔍 ค้นหาภาพย้อนหลังสำหรับ item=#%d จาก Buffer", item_code)
+        
+        output_dir = settings.output_dir / date_str
+        output_dir.mkdir(parents=True, exist_ok=True)
+        target_path = output_dir / f"{date_str}_{item_code}.jpg"
+        
+        best_score = -1.0
+        best_frame = None
+        
+        with self.lock:
+            if not self.frame_buffer:
+                logger.warning("[Vision] ⚠️ ตะกร้าภาพบอกว่าว่างเปล่า! ไม่มีให้ดึง")
+                return None
+                
+            for timestamp, score, frame in self.frame_buffer:
+                if score > best_score:
+                    best_score = score
+                    best_frame = frame
+                    
+            # เคลียร์ buffer ทิ้ง ป้องกันสินค้าโค้ดถัดไป ดึงภาพเสื้อของสินค้านี้ไปใช้
+            self.frame_buffer.clear()
+            
+        if best_frame is not None:
+            cv2.imwrite(str(target_path), best_frame)
+            logger.info("[Vision] 📸 ดึงภาพ Retrospective สำเร็จ → %s (score=%.1f)", target_path.name, best_score)
+            return target_path
+            
+        return None

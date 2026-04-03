@@ -78,7 +78,16 @@ async def health() -> JSONResponse:
     return JSONResponse({"status": "ok", "pipeline": stream_manager.status()})
 
 
-# ─── Graceful Shutdown ────────────────────────────────────────────────────
+# ─── Events (Startup / Shutdown) ─────────────────────────────────────────
+
+@app.on_event("startup")
+async def _startup() -> None:
+    print("\n" + "="*50)
+    print("🚀 ระบบ Vision Server เริ่มทำงานแล้ว!")
+    print(f"👉 แดชบอร์ดพร้อมใช้งาน: http://localhost:{settings.api_port}/dashboard")
+    print("="*50 + "\n")
+
+
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     logger.info("[App] Shutdown → หยุด pipeline ...")
