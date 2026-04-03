@@ -155,18 +155,23 @@ async def get_status() -> StatusResponse:
 async def get_captured_image(item_code: int) -> FileResponse:
     """
     คืนไฟล์ภาพ JPEG ของสินค้าตาม item_code
-    ไฟล์จะอยู่ที่ captured_images/{item_code}.jpg
+    ค้นหาแบบ recursive ทั่วทั้งโฟลเดอร์ภาพ เช่น {prefix}_{item_code}.jpg
     """
-    img_path: Path = settings.output_dir / f"{item_code}.jpg"
-    if not img_path.exists():
+    found_path = None
+    for p in settings.output_dir.rglob("*.jpg"):
+        if p.name == f"{item_code}.jpg" or p.name.endswith(f"_{item_code}.jpg"):
+            found_path = p
+            break
+            
+    if not found_path:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"ยังไม่มีภาพสินค้า #{item_code}",
         )
     return FileResponse(
-        path=str(img_path),
+        path=str(found_path),
         media_type="image/jpeg",
-        filename=f"product_{item_code}.jpg",
+        filename=found_path.name,
     )
 
 
