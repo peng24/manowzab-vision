@@ -31,6 +31,7 @@ def variance_of_laplacian(frame_bgr: np.ndarray) -> float:
 
 # ─── OCR Async Queue ───────────────────────────────────────────────────────
 ocr_queue = queue.Queue(maxsize=20)
+ocr_results_history = collections.deque(maxlen=20)
 ocr_reader = None
 ocr_thread = None
 
@@ -59,6 +60,7 @@ def ocr_worker_loop():
             if text_items:
                 joined_text = " ".join(text_items)
                 logger.info("[OCR] 📝 เจอข้อความในป้ายแท็ก (Conf: %.2f): %s", box_conf, joined_text)
+                ocr_results_history.append((timestamp, joined_text))
             ocr_queue.task_done()
         except queue.Empty:
             continue

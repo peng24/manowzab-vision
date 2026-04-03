@@ -37,11 +37,12 @@ class LiveDataExtractor:
             logger.warning("[NLP] ⚠️ ไม่พบ GEMINI_API_KEY ใน Environment ระบบสกัดข้อมูลจะไม่ทำงาน!")
 
         self.system_instruction = (
-            "Extract the item code (รหัสสินค้า/รายการที่) and price (ราคา) from the following Thai live-selling transcript. "
+            "Extract the item code (รหัสสินค้า/รายการที่) and price (ราคา) from the following multimodal data (Spoken Audio Transcript). "
+            "You may also be provided with 'Visual Data' (OCR Tags). "
             "Return ONLY a valid JSON object with keys 'item' (string or integer) and 'price' (integer). "
             "IMPORTANT RULES: You MUST NOT extract an item code unless it is explicitly preceded by context words like "
-            "'รายการที่', 'รหัส', or 'ตัวที่'. If the transcript is just greetings, casual chat, or general rules "
-            "(e.g., 'ราคาเริ่มต้น 20 ถึง 100 บาท', 'ตัวนี้สวยมาก'), you MUST return an empty JSON {}."
+            "'รายการที่', 'รหัส', or 'ตัวที่' in the Spoken Data. If the Spoken Data is just greetings, casual chat, or general rules "
+            "you MUST return an empty JSON {}. Use Visual Data strictly to correct or validate misheard numbers/strings from the Spoken Data."
         )
 
     def extract_with_gemini(self, text: str) -> tuple[int | None, int | None]:
@@ -89,15 +90,19 @@ class LiveDataExtractor:
             logger.error(f"[NLP] ❌ Gemini API Error / JSON Parsing: {e}")
             return None, None
 
-    def process_text(self, text: str) -> Dict[str, Any] | None:
+    def process_text(self, text: str, ocr_data: str = "") -> Dict[str, Any] | None:
         """
         วิเคราะห์ข้อความด้วย Gemini ถ้าได้ข้อมูลมา ให้คืน Dict
         พร้อมระบุ state ว่าเป็น 'new', 'review', or 'conflict'
         """
         normalized = replace_thai_numbers(text)
         
+        prompt = f"Spoken Data: {normalized}"
+        if ocr_data:
+            prompt += f"\nVisual Data (OCR Extracted tags): {ocr_data}"
+        
         # 1. Сall Gemini API
-        code, price = self.extract_with_gemini(normalized)
+        code, price = self.extract_with_gemini(prompt)
         
         # หากมีการพูดถึงรหัสใหม่ เปลี่ยน State มาเล็งที่ตัวนี้
         if code is not None:

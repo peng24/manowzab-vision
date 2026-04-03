@@ -70,9 +70,15 @@ models/
 
 # Project Specific (Manowzab Vision)
 captured_images/
+data/
 *.log
 runs/
 datasets/
+
+# Video Files
+*.mp4
+*.avi
+*.mkv
 # IDE / OS specific
 .vscode/
 .idea/

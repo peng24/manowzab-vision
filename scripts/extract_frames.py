@@ -38,13 +38,16 @@ def extract_frames(video_path: str, fps_target: int = 1):
             out_path = output_dir / f"{video_file.stem}_{frame_idx}.jpg"
             cv2.imwrite(str(out_path), frame)
             saved_count += 1
-            if saved_count % 10 == 0:
-                print(f"Saved {saved_count} frames...")
+            
+        # คำนวณความคืบหน้า
+        percent = (frame_idx / total_frames) * 100
+        sys.stdout.write(f"\r⏳ Progress: {percent:.2f}% | 📸 Saved: {saved_count} frames")
+        sys.stdout.flush()
                 
         frame_idx += 1
         
     cap.release()
-    print(f"✅ Extraction complete! Saved {saved_count} frames to {output_dir.absolute()}")
+    print(f"\n✅ Extraction complete! Saved {saved_count} frames to {output_dir.absolute()}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract frames from an MP4 video for Model Training Dataset Generation")
