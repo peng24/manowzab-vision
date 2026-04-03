@@ -9,6 +9,8 @@ Entry point — รัน FastAPI ด้วย Uvicorn
 หรือรันตรงด้วย Uvicorn:
     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
+from dotenv import load_dotenv
+load_dotenv()
 import uvicorn
 from app.config import settings
 

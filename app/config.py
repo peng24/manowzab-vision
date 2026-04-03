@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
+    # Gemini API
+    gemini_api_key: str = ""
+
     @property
     def bytes_per_sample(self) -> int:
         return 2  # int16

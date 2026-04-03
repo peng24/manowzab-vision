@@ -153,16 +153,20 @@ class ContinuousVisionBuffer:
         cap.release()
         logger.info("[Vision] 🛑 หยุด Continuous Frame Buffer เรียบร้อย")
 
-    def get_best_frame_and_save(self, item_code: int, date_str: str) -> Path | None:
+    def get_best_frame_and_save(self, item_code: int, prefix: str = "") -> Path | None:
         """
         เมื่อได้ยินรหัสสินค้า ดึงหน้าภาพย้อนหลัง (Retrospective) ทันที (0.1s)
         และเคลียคิวเพื่อไม่ให้ตั๋วใบถัดไปรับภาพนี้ซ้ำ
         """
         logger.info("[Vision] 🔍 ค้นหาภาพย้อนหลังสำหรับ item=#%d จาก Buffer", item_code)
         
-        output_dir = settings.output_dir / date_str
+        output_dir = settings.output_dir
+        if prefix:
+            output_dir = output_dir / prefix
+            
         output_dir.mkdir(parents=True, exist_ok=True)
-        target_path = output_dir / f"{date_str}_{item_code}.jpg"
+        filename = f"{prefix}_{item_code}.jpg" if prefix else f"{item_code}.jpg"
+        target_path = output_dir / filename
         
         best_score = -1.0
         best_frame = None

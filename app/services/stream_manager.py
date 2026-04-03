@@ -186,8 +186,12 @@ def _transcribe_worker(
                     
                 captured_codes.add(item_code)
 
-            # ให้ Buffer ดึงรูปย้อนหลังที่คะแนนดีที่สุดมาบันทึกลง disk ทันที
-            saved_path = vision_buffer.get_best_frame_and_save(item_code, session_date_str)
+            # ให้ Buffer ดึงรูปย้อนหลังที่คะแนนดีที่สุดมาบันทึกลง disk
+            # 🕒 [Look-Ahead Delay] หน่วงเวลา 3 วินาที เพื่อปล่อยให้แม่ค้าชูของให้ชัดเจนหลังจากพูดเลขรหัสเสร็จ
+            logger.info("[Vision] ⏳ รอ 3 วินาที เพื่อเก็บเฟรมภาพ (Look-Ahead)...")
+            time.sleep(3)
+            
+            saved_path = vision_buffer.get_best_frame_and_save(item_code, prefix=session_date_str)
             
             # ยิง Webhook หลังจากดึงภาพสำเร็จ
             send_product_event(

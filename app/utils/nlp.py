@@ -28,7 +28,8 @@ class LiveDataExtractor:
         self.current_code = None
 
         # ตั้งค่า Gemini Client ตรวจสอบว่ามี API Key หรือไม่
-        self.api_key = os.getenv("GEMINI_API_KEY")
+        from app.config import settings
+        self.api_key = settings.gemini_api_key
         if self.api_key:
             self.client = genai.Client(api_key=self.api_key)
         else:
@@ -38,7 +39,9 @@ class LiveDataExtractor:
         self.system_instruction = (
             "Extract the item code (รหัสสินค้า/รายการที่) and price (ราคา) from the following Thai live-selling transcript. "
             "Return ONLY a valid JSON object with keys 'item' (string or integer) and 'price' (integer). "
-            "If no item code or price is found, return an empty JSON {}."
+            "IMPORTANT RULES: You MUST NOT extract an item code unless it is explicitly preceded by context words like "
+            "'รายการที่', 'รหัส', or 'ตัวที่'. If the transcript is just greetings, casual chat, or general rules "
+            "(e.g., 'ราคาเริ่มต้น 20 ถึง 100 บาท', 'ตัวนี้สวยมาก'), you MUST return an empty JSON {}."
         )
 
     def extract_with_gemini(self, text: str) -> tuple[int | None, int | None]:
