@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     # Computer Vision
     yolo_model_name: str = "runs/detect/train2/weights/best.pt"
+    yolo_tag_class_id: int = 0
     capture_duration: float = 3.0
     capture_fps_target: int = 10
     blur_threshold: float = 80.0

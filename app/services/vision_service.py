@@ -12,6 +12,7 @@ import collections
 import logging
 import threading
 import time
+import queue
 from pathlib import Path
 
 import cv2
@@ -28,9 +29,55 @@ def variance_of_laplacian(frame_bgr: np.ndarray) -> float:
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
+# ─── OCR Async Queue ───────────────────────────────────────────────────────
+ocr_queue = queue.Queue(maxsize=20)
+ocr_reader = None
+ocr_thread = None
+
+def get_ocr_reader():
+    global ocr_reader
+    if ocr_reader is None:
+        logger.info("[OCR] 🧠 กำลังโหลด EasyOCR Model...")
+        try:
+            import easyocr
+            ocr_reader = easyocr.Reader(['th', 'en'], gpu=True)
+            logger.info("[OCR] ✅ โหลดสำเร็จ")
+        except ImportError:
+            logger.error("[OCR] ❌ ไม่พบ easyocr กรุณาติดตั้งแต่ pip install easyocr")
+    return ocr_reader
+
+def ocr_worker_loop():
+    reader = get_ocr_reader()
+    if not reader:
+        return
+        
+    while True:
+        try:
+            timestamp, box_conf, crop_img = ocr_queue.get(timeout=1.0)
+            results = reader.readtext(crop_img)
+            text_items = [res[1] for res in results]
+            if text_items:
+                joined_text = " ".join(text_items)
+                logger.info("[OCR] 📝 เจอข้อความในป้ายแท็ก (Conf: %.2f): %s", box_conf, joined_text)
+            ocr_queue.task_done()
+        except queue.Empty:
+            continue
+        except Exception as e:
+            logger.error("[OCR] Error processing frame: %s", e)
+
+def start_ocr_worker():
+    global ocr_thread
+    if ocr_thread is None or not ocr_thread.is_alive():
+        ocr_thread = threading.Thread(target=ocr_worker_loop, daemon=True, name="OCR-Worker")
+        ocr_thread.start()
+
+
 # ─── Frame Scoring ─────────────────────────────────────────────────────────
 
+last_al_save_time = 0.0
+
 def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> tuple[float, np.ndarray]:
+    global last_al_save_time
     sharpness = variance_of_laplacian(frame_bgr)
     if sharpness < settings.blur_threshold:
         return 0.0, frame_bgr
@@ -45,6 +92,30 @@ def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> tuple[float, np.ndar
     highest_conf = max(confs) if confs else 0.0
     
     annotated = results[0].plot()
+    now = time.time()
+    
+    # ── Active Learning Hook (1 Frame / Sec Cooldown) ──
+    if 0.0 < highest_conf < 0.60 and (now - last_al_save_time > 1.0):
+        al_dir = Path("data/needs_training")
+        al_dir.mkdir(parents=True, exist_ok=True)
+        filename = al_dir / f"al_{int(now)}.jpg"
+        cv2.imwrite(str(filename), annotated)
+        last_al_save_time = now
+        logger.info("[ActiveLearning] 📸 เซฟภาพ confidence ต่ำ (%.2f) เข้า needs_training/", highest_conf)
+
+    # ── OCR Extraction Hook ──
+    for box in results[0].boxes:
+        cls_id = int(box.cls)
+        box_conf = float(box.conf)
+        # ตรวจเช็คคลาสเป้าหมาย ว่าเป็นป้ายรหัสหรือไม่
+        if cls_id == getattr(settings, 'yolo_tag_class_id', 0) and box_conf >= 0.50:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            crop = frame_bgr[y1:y2, x1:x2]
+            if crop.size > 0:
+                try:
+                    ocr_queue.put_nowait((now, box_conf, crop))
+                except queue.Full:
+                    pass # ทิ้งเฟรมเพื่อป้องกันคอขวดสะสม
     
     if highest_conf < 0.60:
         return 0.0, annotated
@@ -88,6 +159,8 @@ class ContinuousVisionBuffer:
     def start(self, video_url: str, youtube_url: str):
         if self.worker_thread and self.worker_thread.is_alive():
             return
+            
+        start_ocr_worker()
             
         self.video_url = video_url
         self.youtube_url = youtube_url
