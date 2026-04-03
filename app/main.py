@@ -53,6 +53,7 @@ app.add_middleware(
 
 from fastapi.staticfiles import StaticFiles
 from app.routers import dataset_review
+from app.routers import scripts
 
 # ─── Static Mounts ─────────────────────────────────────────────────────────
 train_images_dir = Path("data/train/images")
@@ -62,8 +63,15 @@ app.mount("/data/train/images", StaticFiles(directory=str(train_images_dir)), na
 # ─── Routers ───────────────────────────────────────────────────────────────
 app.include_router(vision_router.router)
 app.include_router(dataset_review.router)
+app.include_router(scripts.router)
 
-# ─── Web UI Endpoints ─────────────────────────────────────────────────────────
+# ─── Root / Health ─────────────────────────────────────────────────────────
+@app.get("/", tags=["Health"])
+async def root() -> HTMLResponse:
+    """เปิดหน้าต่างเว็บแอปศูนย์กลาง System Hub"""
+    html_path = Path(__file__).parent.parent / "hub.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard() -> HTMLResponse:
     """เปิด Web Dashboard สำหรับทดสอบ API"""
@@ -77,14 +85,6 @@ async def review_tool() -> HTMLResponse:
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
-@app.get("/", tags=["Health"])
-async def root() -> dict:
-    return {
-        "service": "Manowzab Vision API",
-        "version": "1.0.0",
-        "status":  "ok",
-        "docs":    "/docs",
-    }
 
 
 @app.get("/health", tags=["Health"])
