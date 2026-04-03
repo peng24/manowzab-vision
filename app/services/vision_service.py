@@ -84,6 +84,20 @@ def get_live_m3u8(youtube_url: str) -> str:
         return ""
 
 import shutil
+import urllib.request
+import urllib.parse
+
+def _extract_video_id(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.hostname in ('youtu.be', 'www.youtu.be'):
+        return parsed.path[1:]
+    if parsed.hostname in ('youtube.com', 'www.youtube.com'):
+        if parsed.path == '/watch':
+            qs = urllib.parse.parse_qs(parsed.query)
+            return qs.get('v', [None])[0]
+        if parsed.path.startswith('/live/'):
+            return parsed.path.split('/')[2]
+    return None
 
 def capture_best_frame(
     youtube_url: str,
@@ -97,64 +111,65 @@ def capture_best_frame(
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{item_code}.jpg"
 
-    tmp_dir = output_dir / f"tmp_{item_code}"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("[Vision] 📷 เริ่มจับภาพ item=#%d ตรงลง /%s", item_code, output_dir.name)
 
-    logger.info("[Vision] 📷 เริ่มจับภาพ item=#%d จากสตรีมสด (%.1fs)", item_code, settings.capture_duration)
-
+    # 1. แคปภาพ 1 เฟรมตรงๆ 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "quiet",
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
-        "-live_start_index", "-1",  # 🟢 สำคัญสุด! บังคับดึงภาพจากวินาทีล่าสุดของ Live
         "-i", video_url,
-        "-t", "4",                  # เวลาในการแคป
-        "-vf", "fps=2",             # แคป 2 ภาพต่อวินาที (ได้ราวๆ 8 ภาพมาเลือก)
-        str(tmp_dir / "%03d.jpg")
+        "-vframes", "1",
+        "-q:v", "2",
+        str(out_path)
     ]
 
     try:
-        subprocess.run(cmd, timeout=15)
+        subprocess.run(cmd, timeout=12)
     except subprocess.TimeoutExpired:
         logger.warning("[Vision] ⚠️ Timeout จาก FFmpeg")
     except Exception as e:
         logger.error("[Vision] ❌ FFmpeg error: %s", e)
 
-    # เช็คว่ามีรูปถูกสร้างมาไหม
-    img_files = list(tmp_dir.glob("*.jpg"))
-    
-    # ถ้า URL เก่าใช้ไม่ได้ (หมดอายุ) ดึงใหม่ผ่าน yt-dlp
-    if not img_files:
-        logger.warning("[Vision] ⚠️ FFmpeg ไม่ได้ภาพ (ลิงก์อาจตาย) ขอดึงลิงก์ YouTube ใหม่...")
+    # 2. ถ้าไม่ได้ภาพ (ลิงก์อาจตายหรือเป็นแค่ audio-only) ลองให้ yt-dlp ดึง URL ใหม่
+    if not out_path.exists():
+        logger.warning("[Vision] ⚠️ FFmpeg ไม่ได้ภาพ (ลิงก์หลักพัง/ไม่มีภาพ) ขอดึงลิงก์ YouTube ใหม่...")
         fresh_url = get_live_m3u8(youtube_url)
         if fresh_url:
-            cmd[13] = fresh_url # แก้ URL
+            cmd[11] = fresh_url # index ของ video_url
             try:
-                subprocess.run(cmd, timeout=15)
-                img_files = list(tmp_dir.glob("*.jpg"))
+                subprocess.run(cmd, timeout=12)
             except:
                 pass
 
-    best_score: float = -1.0
-    best_frame_path: Path | None = None
+    # 3. ถ้ายังไม่ได้อีก (เช่น yt-dlp แจ้ง JS Runtime missing) ให้โหลด Live Thumbnail
+    if not out_path.exists():
+        logger.warning("[Vision] ⚠️ FFmpeg พังหมด! ดึง Live Thumbnail ของช่องมาแก้ขัดแทน")
+        vid = _extract_video_id(youtube_url)
+        if vid:
+            urls = [
+                f"https://i.ytimg.com/vi/{vid}/maxresdefault_live.jpg",
+                f"https://i.ytimg.com/vi/{vid}/hqdefault_live.jpg"
+            ]
+            for tu in urls:
+                try:
+                    urllib.request.urlretrieve(tu, str(out_path))
+                    break
+                except:
+                    pass
 
-    for f in img_files:
-        frame = cv2.imread(str(f))
+    # บันทึกภาพ พร้อมกับประเมินคะแนนเพื่อเก็บเป็น Log ตามโมเดล
+    saved: Path | None = None
+    if out_path.exists():
+        frame = cv2.imread(str(out_path))
         if frame is not None:
             s = score_frame(frame, yolo_model)
-            if s > best_score:
-                best_score = s
-                best_frame_path = f
-
-    saved: Path | None = None
-    if best_frame_path is not None:
-        shutil.copy(best_frame_path, out_path)
-        saved = out_path
-        logger.info("[Vision] 📸 บันทึกภาพเสร็จสิ้น → %s (score=%.1f)", out_path, best_score)
+            logger.info("[Vision] 📸 บันทึกภาพเสร็จสิ้น → %s (score=%.1f)", out_path.name, s)
+            saved = out_path
+        else:
+            logger.warning("[Vision] ⚠️ ไฟล์เสีย ลบออก")
+            out_path.unlink(missing_ok=True)
     else:
         logger.warning("[Vision] ⚠️ ไม่ได้เฟรมภาพสำหรับ item=#%d สตรีมอาจจะหยุดไปแล้ว", item_code)
-
-    # ล้างไฟล์ temp
-    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if on_complete:
         on_complete(item_code, saved)
