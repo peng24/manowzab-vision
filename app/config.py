@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     sample_rate: int = 16000
 
     # Computer Vision
-    yolo_model_name: str = "yolov8n.pt"
+    yolo_model_name: str = "runs/detect/train2/weights/best.pt"
     capture_duration: float = 3.0
     capture_fps_target: int = 10
     blur_threshold: float = 80.0

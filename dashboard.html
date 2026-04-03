@@ -503,7 +503,7 @@
   // ── YouTube Video ID ───────────────────────────────────────────────────────
   function extractVideoId(url) {
     const patterns = [
-      /(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/,
+      /(?:v=|youtu\.be\/|embed\/|live\/)([A-Za-z0-9_-]{11})/,
       /^([A-Za-z0-9_-]{11})$/,
     ];
     for (const p of patterns) {
@@ -579,17 +579,21 @@
   // ── Status Polling ─────────────────────────────────────────────────────────
   async function pollStatus() {
     try {
-      const r = await fetch(`${API}/vision/status`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const d = await r.json();
-      applyStatus(d);
+      const [rStatus, rResults] = await Promise.all([
+        fetch(`${API}/vision/status`),
+        fetch(`${API}/vision/results`).catch(()=>({ok:false}))
+      ]);
+      if (!rStatus.ok) throw new Error(`HTTP ${rStatus.status}`);
+      const d = await rStatus.json();
+      const results = rResults.ok ? await rResults.json() : [];
+      applyStatus(d, results);
       document.getElementById('stat-lastpoll').textContent = now();
     } catch(e) {
       setOfflineUI();
     }
   }
 
-  function applyStatus(d) {
+  function applyStatus(d, results = []) {
     const running = d.running;
 
     // Header dot
@@ -638,16 +642,41 @@
       } else {
         toast('Pipeline หยุดแล้ว', 'warn');
         log('Pipeline หยุด', 'warn');
+        if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+        document.getElementById('live-iframe').style.display = 'none';
+        document.getElementById('video-placeholder').style.display = 'flex';
+        document.getElementById('live-badge').classList.remove('show');
+        document.getElementById('mute-btn').style.display = 'none';
+        currentVidId = '';
       }
     }
     prevRunning = running;
+
+    // Update pricing for existing items
+    results.forEach(res => {
+       const code = res?.product?.item_code;
+       if (code !== undefined) {
+           const priceEl = document.getElementById(`price-${code}`);
+           const sizeEl = document.getElementById(`size-${code}`);
+           if (priceEl && !priceEl.dataset.editing) {
+               priceEl.innerHTML = `฿${res.product.price} <span style="font-size:12px; cursor:pointer;" onclick="editPrice(event, ${code})" title="แก้ไขราคา">✏️</span>`;
+           }
+           if (sizeEl) {
+               const chest = res.product.chest ? `อก ${res.product.chest}` : '';
+               const len = res.product.length ? `ยาว ${res.product.length}` : '';
+               sizeEl.textContent = [chest, len].filter(Boolean).join(' ') || '—';
+           }
+       }
+    });
 
     // New captured codes
     if (d.captured_codes) {
       d.captured_codes.forEach(code => {
         if (!knownCodes.has(code)) {
           knownCodes.add(code);
-          addProductCard(code);
+          const itemData = results.find(r => r?.product?.item_code === code);
+          const price = itemData ? itemData.product.price : '...';
+          addProductCard(code, price);
           log(`📸 จับภาพสินค้า #${code} สำเร็จ!`, 'ok');
           toast(`จับภาพสินค้า #${code} ✅`, 'ok');
         }
@@ -677,8 +706,9 @@
     card.innerHTML = `
       <div class="product-thumb" id="thumb-${code}">
         <img src="${imgSrc}" alt="สินค้า ${code}"
-             onload="this.style.display='block'" 
-             onerror="this.parentElement.innerHTML='<div style=\\\'opacity:0.3;font-size:32px;\\\'>📦</div>'" />
+             onload="this.style.display='block'; this.nextElementSibling.style.display='none';" 
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+        <div class="placeholder-icon" style="display:none;opacity:0.3;font-size:32px;justify-content:center;align-items:center;height:100%;">📦</div>
       </div>
       <div class="product-info">
         <div class="product-code">รายการ #${code}</div>
@@ -686,7 +716,31 @@
         <div class="product-size" id="size-${code}"></div>
         <div class="product-ts">${ts}</div>
       </div>`;
-    grid.appendChild(card);
+    grid.prepend(card);
+  }
+
+  function editPrice(event, code) {
+    event.stopPropagation();
+    const newPrice = prompt(`กรอกราคาใหม่สำหรับรายการ #${code}`);
+    if (newPrice !== null && !isNaN(parseInt(newPrice))) {
+       const p = parseInt(newPrice);
+       const priceEl = document.getElementById(`price-${code}`);
+       if (priceEl) priceEl.dataset.editing = "1";
+       fetch(`${API}/vision/results/${code}/price`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({price: p})
+       }).then(r => r.json()).then(data => {
+          if(data.success && priceEl) {
+              priceEl.innerHTML = `฿${data.new_price} <span style="font-size:12px; cursor:pointer;" onclick="editPrice(event, ${code})" title="แก้ไขราคา">✏️</span>`;
+              toast(`แก้ไขราคารายการ #${code} เป็น ฿${data.new_price}`, 'ok');
+          }
+       }).catch(e => {
+          toast(`เกิดข้อผิดพลาดในการแก้ราคา`, 'error');
+       }).finally(() => {
+          if (priceEl) delete priceEl.dataset.editing;
+       });
+    }
   }
 
   function refreshGallery() {
@@ -700,7 +754,9 @@
   // ── Modal ──────────────────────────────────────────────────────────────────
   function openModal(code) {
     document.getElementById('modal-img').src = `${API}/vision/captured/${code}?t=${Date.now()}`;
-    document.getElementById('modal-title').textContent = `หมายเลขรายการ #${code}`;
+    const priceEl = document.getElementById(`price-${code}`);
+    const priceText = priceEl ? priceEl.innerText.split(' ')[0] : '';
+    document.getElementById('modal-title').textContent = `หมายเลขรายการ #${code} ${priceText ? '| ' + priceText : ''}`;
     document.getElementById('modal-overlay').classList.add('open');
   }
   function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); }

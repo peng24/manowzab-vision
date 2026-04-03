@@ -71,7 +71,8 @@ models/
 # Project Specific (Manowzab Vision)
 captured_images/
 *.log
-
+runs/
+datasets/
 # IDE / OS specific
 .vscode/
 .idea/

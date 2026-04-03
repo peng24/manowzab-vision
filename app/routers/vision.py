@@ -19,6 +19,7 @@ from pydantic import BaseModel, HttpUrl, field_validator
 
 from app.config import settings
 from app.services.stream_manager import stream_manager
+import json
 
 router = APIRouter(prefix="/vision", tags=["Vision Pipeline"])
 
@@ -167,3 +168,46 @@ async def get_captured_image(item_code: int) -> FileResponse:
         media_type="image/jpeg",
         filename=f"product_{item_code}.jpg",
     )
+
+
+class UpdatePriceRequest(BaseModel):
+    price: int
+
+@router.get("/results", summary="ดึงข้อมูลราคาสินค้าจาก local")
+async def get_results() -> list[dict]:
+    results_file = settings.output_dir / "results.json"
+    if not results_file.exists():
+        return []
+    try:
+        data = json.loads(results_file.read_text(encoding="utf-8"))
+        return data
+    except:
+        return []
+
+@router.post("/results/{item_code}/price", summary="อัปเดตราคาสินค้า")
+async def update_item_price(item_code: int, req: UpdatePriceRequest):
+    results_file = settings.output_dir / "results.json"
+    if not results_file.exists():
+        raise HTTPException(status_code=404, detail="No results.json found")
+    
+    try:
+        data = json.loads(results_file.read_text(encoding="utf-8"))
+        updated = False
+        for item in data:
+            if item.get("product", {}).get("item_code") == item_code:
+                item["product"]["price"] = req.price
+                updated = True
+                break
+        
+        if not updated:
+            raise HTTPException(status_code=404, detail="Item not found")
+            
+        results_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        
+        # update in memory extractor so it won't conflict later
+        if stream_manager._extractor and item_code in stream_manager._extractor.history:
+            stream_manager._extractor.history[item_code]["price"] = req.price
+            
+        return {"success": True, "new_price": req.price}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

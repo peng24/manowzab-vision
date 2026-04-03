@@ -19,5 +19,5 @@ if __name__ == "__main__":
         port=settings.api_port,
         reload=False,           # ปิด reload เพราะ model ใหญ่ (เปิดได้ระหว่าง dev)
         log_level="info",
-        access_log=True,
+        access_log=False,
     )

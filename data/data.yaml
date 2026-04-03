@@ -1,0 +1,12 @@
+train: train/images
+val: train/images
+
+nc: 1
+names: ["display_shirt"]
+
+roboflow:
+  workspace: -jggs1
+  project: -jggs1
+  version: dataset
+  license: Private
+  url: https://app.roboflow.com/-jggs1/-jggs1/dataset

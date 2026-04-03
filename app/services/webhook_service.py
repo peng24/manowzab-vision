@@ -38,40 +38,47 @@ def _build_payload(
     }
 
 
+import json
+
+def _save_local_result(payload: dict) -> None:
+    """บันทึกข้อมูลลงไฟล์ results.json ในโฟลเดอร์ภาพ"""
+    output_dir = settings.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_file = output_dir / "results.json"
+
+    data = []
+    if results_file.exists():
+        try:
+            data = json.loads(results_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # ตรวจสอบว่าเคยมีสินค้ารหัสนี้แล้วหรือยัง (ให้ Update ถ้าเคยมีแล้วเช่นอัปเดตสถานะ review/conflict)
+    item_code = payload["product"].get("item_code")
+    updated = False
+    for i, item in enumerate(data):
+        if item.get("product", {}).get("item_code") == item_code:
+            data[i] = payload
+            updated = True
+            break
+
+    if not updated:
+        data.append(payload)
+
+    results_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("[Local] 💾 บันทึกข้อมูลสินค้า #%s ลง results.json เรียบร้อย", item_code)
+
+
 def send_product_event(
     product: dict,
     image_path: Path | None,
     session_id: str,
 ) -> None:
     """
-    ส่ง webhook event ไปยัง WEBHOOK_URL
-    ถ้าไม่ได้ตั้งค่า WEBHOOK_URL → ข้ามโดยไม่ error
-
-    Args:
-        product:    dict จาก extract_product_data()
-        image_path: Path ของไฟล์ภาพที่บันทึก (None ถ้าไม่ได้จับ)
-        session_id: UUID ของ session ปัจจุบัน
+    บันทึกผลลงไฟล์ในเครื่อง (results.json)
+    แบบไม่ต้องใช้ Webhook แล้ว
     """
-    url = settings.webhook_url
-    if not url:
-        logger.debug("[Webhook] WEBHOOK_URL ไม่ได้ตั้งค่า — ข้าม")
-        return
-
     payload = _build_payload(product, image_path, session_id)
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(url, json=payload)
-            resp.raise_for_status()
-            logger.info(
-                "[Webhook] ✅  ส่งสำเร็จ item=%s → %s  HTTP %d",
-                product.get("item_code"),
-                url,
-                resp.status_code,
-            )
-    except httpx.TimeoutException:
-        logger.warning("[Webhook] ⚠️  Timeout ขณะส่ง item=%s", product.get("item_code"))
-    except httpx.HTTPStatusError as e:
-        logger.error("[Webhook] ❌  HTTP %d: %s", e.response.status_code, e.response.text[:200])
-    except Exception as e:
-        logger.error("[Webhook] ❌  ส่งไม่ได้: %s", e)
+    
+    # 1. เก็บรูปลงเครื่องอยู่แล้ว + เพิ่มการเก็บ JSON ลงเครื่อง
+    _save_local_result(payload)

@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+import yt_dlp
 
 import cv2
 import numpy as np
@@ -40,112 +41,120 @@ def variance_of_laplacian(frame_bgr: np.ndarray) -> float:
 def score_frame(frame_bgr: np.ndarray, yolo_model: YOLO) -> float:
     """
     ให้คะแนนเฟรม:
-      score = sharpness × (1 + 0.5 × max_person_confidence)
+      score = sharpness × highest_confidence (ความมั่นใจของ AI ว่าเจอเสื้อ)
 
-    เฟรมที่ sharpness < BLUR_THRESHOLD จะได้ score = 0 (ตัดทิ้ง)
+    เฟรมที่ sharpness < BLUR_THRESHOLD หรือหาเสื้อไม่เจอ จะได้ score = 0 (ตัดทิ้ง)
     """
     sharpness = variance_of_laplacian(frame_bgr)
     if sharpness < settings.blur_threshold:
         return 0.0
 
+    # ให้ AI หาเสื้อที่เราเทรนมา (ไม่ต้องระบุ classes=[0] แล้ว เพราะโมเดลเรามีแค่คลาสเสื้อคลาสเดียว)
     results = yolo_model(
         frame_bgr,
-        classes=[0],    # class 0 = person
         verbose=False,
         imgsz=640,
     )
+    
     confs = [float(box.conf) for r in results for box in r.boxes]
-    bonus = max(confs) * 0.5 if confs else 0.0
-    return sharpness * (1.0 + bonus)
+    
+    # ดึงค่าความมั่นใจสูงสุดที่ AI หาเสื้อเจอ
+    highest_conf = max(confs) if confs else 0.0
+    
+    # ถ้า AI ไม่เจอเสื้อเลย หรือเจอแต่มั่นใจน้อยกว่า 60% (เช่น ถูกแม่ค้าบัง) ให้ข้ามเฟรมนี้ไป
+    if highest_conf < 0.60:
+        return 0.0
+
+    # เอาคะแนนความคมชัดคูณกับความมั่นใจของ AI ยิ่งชัดและ AI มั่นใจมาก คะแนนยิ่งพุ่งสูงปรี๊ด
+    return sharpness * highest_conf
 
 
 # ─── Capture Worker ────────────────────────────────────────────────────────
 
+
+def get_live_m3u8(youtube_url: str) -> str:
+    try:
+        import yt_dlp
+        ydl_opts = {"format": "best", "quiet": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+            return info.get("url", "")
+    except Exception as e:
+        logger.warning("YT-DLP get_live_m3u8 error: %s", e)
+        return ""
+
+import shutil
+
 def capture_best_frame(
+    youtube_url: str,
     video_url: str,
     item_code: int,
     yolo_model: YOLO,
     stop_event: threading.Event,
     on_complete: "Callable[[int, Path | None], None] | None" = None,
 ) -> Path | None:
-    """
-    เปิด video_url ด้วย OpenCV, วิ่งวนเป็นเวลา CAPTURE_DURATION วินาที
-    ประเมินแต่ละเฟรมด้วย score_frame() → บันทึกเฟรมคะแนนสูงสุด
-
-    Args:
-        on_complete: callback(item_code, saved_path | None) ถูกเรียกเมื่อเสร็จ
-
-    Returns:
-        Path ของไฟล์ที่บันทึก หรือ None ถ้าไม่มีเฟรมพอ
-    """
     output_dir: Path = settings.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{item_code}.jpg"
 
-    logger.info("[Vision] 📷  เริ่มจับภาพ item=#%d  (%.1fs)", item_code, settings.capture_duration)
+    tmp_dir = output_dir / f"tmp_{item_code}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("[Vision] 📷 เริ่มจับภาพ item=#%d จากสตรีมสด (%.1fs)", item_code, settings.capture_duration)
 
     cmd = [
-        "ffmpeg", "-loglevel", "quiet",
+        "ffmpeg", "-y", "-loglevel", "quiet",
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
-        "-live_start_index", "-1",  # 🟢 สำคัญมาก! บังคับให้เริ่มที่ Live Edge เสมอ
+        "-live_start_index", "-1",  # 🟢 สำคัญสุด! บังคับดึงภาพจากวินาทีล่าสุดของ Live
         "-i", video_url,
-        "-t", str(settings.capture_duration),
-        "-vf", f"fps={settings.capture_fps_target}",
-        "-f", "image2pipe",
-        "-vcodec", "mjpeg",
-        "pipe:1"
+        "-t", "4",                  # เวลาในการแคป
+        "-vf", "fps=2",             # แคป 2 ภาพต่อวินาที (ได้ราวๆ 8 ภาพมาเลือก)
+        str(tmp_dir / "%03d.jpg")
     ]
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        subprocess.run(cmd, timeout=15)
+    except subprocess.TimeoutExpired:
+        logger.warning("[Vision] ⚠️ Timeout จาก FFmpeg")
     except Exception as e:
-        logger.error("[Vision] ❌  เปิด ffmpeg ไม่ได้: %s", e)
-        if on_complete: on_complete(item_code, None)
-        return None
+        logger.error("[Vision] ❌ FFmpeg error: %s", e)
+
+    # เช็คว่ามีรูปถูกสร้างมาไหม
+    img_files = list(tmp_dir.glob("*.jpg"))
+    
+    # ถ้า URL เก่าใช้ไม่ได้ (หมดอายุ) ดึงใหม่ผ่าน yt-dlp
+    if not img_files:
+        logger.warning("[Vision] ⚠️ FFmpeg ไม่ได้ภาพ (ลิงก์อาจตาย) ขอดึงลิงก์ YouTube ใหม่...")
+        fresh_url = get_live_m3u8(youtube_url)
+        if fresh_url:
+            cmd[13] = fresh_url # แก้ URL
+            try:
+                subprocess.run(cmd, timeout=15)
+                img_files = list(tmp_dir.glob("*.jpg"))
+            except:
+                pass
 
     best_score: float = -1.0
-    best_frame: np.ndarray | None = None
-    buffer = b""
+    best_frame_path: Path | None = None
 
-    try:
-        while not stop_event.is_set():
-            chunk = proc.stdout.read(8192)
-            if not chunk:
-                break
-            buffer += chunk
-
-            # ค้นหาจุดเริ่มต้นและจุดสิ้นสุดของไฟล์ JPEG
-            while True:
-                start = buffer.find(b"\xff\xd8")
-                if start == -1:
-                    break
-                end = buffer.find(b"\xff\xd9", start)
-                if end == -1:
-                    break
-
-                # สกัดไฟล์ JPEG 1 ภาพ
-                jpg_data = buffer[start:end+2]
-                buffer = buffer[end+2:]
-
-                # Decode กลับเป็น BGR frame สำหรับ OpenCV
-                frame_arr = np.frombuffer(jpg_data, dtype=np.uint8)
-                frame = cv2.imdecode(frame_arr, cv2.IMREAD_COLOR)
-
-                if frame is not None:
-                    s = score_frame(frame, yolo_model)
-                    if s > best_score:
-                        best_score, best_frame = s, frame.copy()
-    finally:
-        proc.stdout.close()
-        proc.wait(timeout=2)
+    for f in img_files:
+        frame = cv2.imread(str(f))
+        if frame is not None:
+            s = score_frame(frame, yolo_model)
+            if s > best_score:
+                best_score = s
+                best_frame_path = f
 
     saved: Path | None = None
-    if best_frame is not None and best_score > 0:
-        cv2.imwrite(str(out_path), best_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if best_frame_path is not None:
+        shutil.copy(best_frame_path, out_path)
         saved = out_path
-        logger.info("[Vision] 📸  บันทึก → %s  (score=%.1f)", out_path, best_score)
+        logger.info("[Vision] 📸 บันทึกภาพเสร็จสิ้น → %s (score=%.1f)", out_path, best_score)
     else:
-        logger.warning("[Vision] ⚠️  ไม่มีเฟรมที่คมชัดพอสำหรับ item=#%d", item_code)
+        logger.warning("[Vision] ⚠️ ไม่ได้เฟรมภาพสำหรับ item=#%d สตรีมอาจจะหยุดไปแล้ว", item_code)
+
+    # ล้างไฟล์ temp
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
     if on_complete:
         on_complete(item_code, saved)
@@ -155,6 +164,7 @@ def capture_best_frame(
 # ─── Non-blocking Trigger ──────────────────────────────────────────────────
 
 def trigger_capture(
+    youtube_url: str,
     video_url: str,
     item_code: int,
     yolo_model: YOLO,
@@ -167,7 +177,7 @@ def trigger_capture(
     """
     t = threading.Thread(
         target=capture_best_frame,
-        args=(video_url, item_code, yolo_model, stop_event, on_complete),
+        args=(youtube_url, video_url, item_code, yolo_model, stop_event, on_complete),
         daemon=True,
         name=f"vision-item{item_code}",
     )

@@ -28,7 +28,7 @@ from faster_whisper import WhisperModel
 from ultralytics import YOLO
 
 from app.config import settings
-from app.utils.nlp import extract_product_data
+from app.utils.nlp import LiveDataExtractor
 from app.services.vision_service import trigger_capture
 from app.services.webhook_service import send_product_event
 
@@ -103,12 +103,14 @@ def _transcribe_worker(
     whisper_model: WhisperModel,
     yolo_model: YOLO,
     audio_queue: queue.Queue,
+    youtube_url: str,
     video_url: str,
     stop_event: threading.Event,
     capture_lock: threading.Lock,
     captured_codes: set[int],
     session_id: str,
     on_transcript: Callable[[str], None] | None,
+    extractor: LiveDataExtractor,
 ) -> None:
     """
     Loop หลัก:
@@ -159,20 +161,29 @@ def _transcribe_worker(
                 on_transcript(full_text)
 
             # ── NLP ──────────────────────────────────────────────────────
-            product = extract_product_data(full_text)
+            product = extractor.process_text(full_text)
             if not product:
                 continue
 
-            logger.info("[NLP] 🛍️  item=%s  price=%s",
-                        product.get("item_code"), product.get("price"))
-
-            # ── Vision Trigger ─────────────────────────────────────────
+            status = product.get("status", "new")
             item_code: int = product["item_code"]
+            price: int = product["price"]
 
+            logger.info("[NLP] 🛍️  item=%d price=%d status=%s", item_code, price, status)
+
+            # ── Vision Trigger / Webhook ─────────────────────────────────
             with capture_lock:
-                if item_code in captured_codes:
-                    logger.info("[Vision] ℹ️  item=#%d เคยจับไปแล้ว", item_code)
+                if status == "conflict":
+                    logger.warning("[Review] 🚨  Price Conflict item=#%d (ก่อน: %s, ใหม่: %s)", 
+                                   item_code, product.get("old_price"), price)
+                    # ยิง Webhook แบบส่งข้อมูลขัดแย้งเลย ไม่ต้องอัปรูปซ้ำ
+                    send_product_event(product=product, image_path=None, session_id=session_id)
                     continue
+
+                if item_code in captured_codes:
+                    # ถ้า review แต่ราคาเดิม หรือจับไปแล้ว ไม่ต้องถ่ายรูป
+                    continue
+                    
                 captured_codes.add(item_code)
 
             # callback ที่รันหลัง capture เสร็จ → ส่ง webhook
@@ -184,6 +195,7 @@ def _transcribe_worker(
                 )
 
             trigger_capture(
+                youtube_url=youtube_url,
                 video_url=video_url,
                 item_code=item_code,
                 yolo_model=yolo_model,
@@ -231,6 +243,7 @@ class StreamManager:
         self._captured_codes: set[int]             = set()
         self._t_audio:      threading.Thread | None = None
         self._t_transcribe: threading.Thread | None = None
+        self._extractor:    LiveDataExtractor | None = None
         self._session_id:   str = ""
         self._youtube_url:  str = ""
         self._started_at:   float | None = None
@@ -293,6 +306,7 @@ class StreamManager:
         self._session_id     = session_id
         self._youtube_url    = youtube_url
         self._started_at     = time.time()
+        self._extractor      = LiveDataExtractor()
 
         audio_queue = queue.Queue(maxsize=10)
 
@@ -308,12 +322,14 @@ class StreamManager:
                 self._whisper,
                 self._yolo,
                 audio_queue,
+                self._youtube_url,
                 video_url,
                 self._stop_event,
                 self._capture_lock,
                 self._captured_codes,
                 session_id,
                 None,          # on_transcript callback (None = log เท่านั้น)
+                self._extractor,
             ),
             daemon=True,
             name="transcribe-worker",
