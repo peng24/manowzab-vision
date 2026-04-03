@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Review Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; overflow: hidden; }
+        .kbd { background: #334155; padding: 0.2rem 0.5rem; border-radius: 0.25rem; font-family: monospace; border: 1px solid #475569; }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col items-center justify-center">
+
+    <!-- Loading State -->
+    <div id="loading-screen" class="text-xl text-slate-400">Loading dataset...</div>
+
+    <!-- Empty State -->
+    <div id="empty-screen" class="hidden text-center">
+        <h2 class="text-3xl font-bold text-slate-200 mb-2">🎉 All Done!</h2>
+        <p class="text-slate-400">No more images left to review.</p>
+    </div>
+
+    <!-- Review System -->
+    <div id="review-screen" class="hidden flex-col items-center justify-center w-full max-w-4xl px-4">
+        <div class="flex justify-between w-full mb-4 items-end">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Review Dataset</h1>
+                <p id="filename-display" class="text-slate-400 text-sm">image.jpg</p>
+            </div>
+            <div class="text-right">
+                <span class="text-slate-400 text-sm">Progress</span>
+                <div class="text-xl font-bold text-indigo-400"><span id="current-idx">0</span> / <span id="total-imgs">0</span></div>
+            </div>
+        </div>
+
+        <div class="relative w-full aspect-video bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 flex items-center justify-center">
+            <img id="image-viewer" src="" alt="Dataset Image" class="max-w-full max-h-full object-contain">
+            
+            <!-- Quick Flash Indicators -->
+            <div id="flash-pass" class="absolute inset-0 bg-emerald-500/20 opacity-0 transition-opacity duration-300 pointer-events-none"></div>
+            <div id="flash-reject" class="absolute inset-0 bg-rose-500/20 opacity-0 transition-opacity duration-300 pointer-events-none"></div>
+        </div>
+
+        <!-- Controls Guide -->
+        <div class="grid grid-cols-3 gap-4 w-full mt-8">
+            <div class="bg-slate-800 p-4 rounded-lg text-center border border-emerald-900/50">
+                <div class="text-emerald-400 font-bold mb-2">PASS (OK)</div>
+                <div class="text-sm text-slate-400">Press <span class="kbd">Enter</span></div>
+            </div>
+            <div class="bg-slate-800 p-3 rounded-lg text-center border border-slate-700">
+                <div class="text-slate-300 font-bold mb-1 text-sm">BACK</div>
+                <div class="text-xs text-slate-400"><span class="kbd">Left Arrow</span></div>
+            </div>
+            <div class="bg-slate-800 p-3 rounded-lg text-center border border-slate-700">
+                <div class="text-slate-300 font-bold mb-1 text-sm">SKIP</div>
+                <div class="text-xs text-slate-400"><span class="kbd">Right Arrow</span></div>
+            </div>
+            <div class="bg-slate-800 p-3 rounded-lg text-center border border-rose-900/50">
+                <div class="text-rose-400 font-bold mb-1 text-sm">REJECT</div>
+                <div class="text-xs text-slate-400"><span class="kbd">Delete</span></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Screen -->
+    <div id="summary-screen" class="hidden flex-col items-center justify-center w-full max-w-2xl px-4 text-center">
+        <h2 class="text-3xl font-bold text-white mb-2">Review Complete</h2>
+        <p class="text-slate-400 mb-8">You have reviewed all available images.</p>
+        
+        <div class="bg-slate-800 w-full rounded-xl border border-slate-700 p-6 mb-8 text-left">
+            <h3 class="text-lg font-bold text-rose-400 mb-4 border-b border-slate-700 pb-2">Destruction List</h3>
+            <p class="text-slate-300 mb-2">The following <span id="reject-count" class="font-bold text-white">0</span> images and their labels will be permanently deleted from the hard drive:</p>
+            <div id="reject-list" class="max-h-48 overflow-y-auto text-sm text-slate-500 font-mono bg-slate-900 p-3 rounded">
+                <!-- Rejected filenames go here -->
+            </div>
+        </div>
+
+        <div class="flex gap-4">
+            <button onclick="location.reload()" class="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-bold transition-colors">Review Again</button>
+            <button id="confirm-btn" onclick="confirmDeletion()" class="px-6 py-3 bg-rose-600 hover:bg-rose-500 rounded-lg font-bold transition-colors shadow-lg shadow-rose-900/20">Confirm Delete</button>
+        </div>
+    </div>
+
+    <!-- Script Logic -->
+    <script>
+        let images = [];
+        let currentIndex = 0;
+        let rejectedImages = [];
+
+        // DOM Elements
+        const loadingScreen = document.getElementById('loading-screen');
+        const emptyScreen = document.getElementById('empty-screen');
+        const reviewScreen = document.getElementById('review-screen');
+        const summaryScreen = document.getElementById('summary-screen');
+        
+        const imageViewer = document.getElementById('image-viewer');
+        const filenameDisplay = document.getElementById('filename-display');
+        const currentIdxDisplay = document.getElementById('current-idx');
+        const totalImgsDisplay = document.getElementById('total-imgs');
+        
+        const flashPass = document.getElementById('flash-pass');
+        const flashReject = document.getElementById('flash-reject');
+
+        // Fetch Images
+        async function fetchImages() {
+            try {
+                const res = await fetch('/api/review/images');
+                const data = await res.json();
+                images = data.images;
+                
+                loadingScreen.classList.add('hidden');
+                
+                if (images.length === 0) {
+                    emptyScreen.classList.remove('hidden');
+                } else {
+                    totalImgsDisplay.textContent = images.length;
+                    reviewScreen.classList.remove('hidden');
+                    reviewScreen.classList.add('flex');
+                    renderImage();
+                    
+                    // Attach Keyboard Listener
+                    document.addEventListener('keydown', handleKeyPress);
+                }
+            } catch (err) {
+                loadingScreen.textContent = 'Failed to load dataset.';
+                console.error(err);
+            }
+        }
+
+        function renderImage() {
+            if (currentIndex >= images.length) {
+                showSummary();
+                return;
+            }
+            const filename = images[currentIndex];
+            // Cache buster to prevent stale images
+            imageViewer.src = `/data/train/images/${filename}?t=${Date.now()}`;
+            filenameDisplay.textContent = filename;
+            currentIdxDisplay.textContent = currentIndex + 1;
+        }
+
+        function handleKeyPress(e) {
+            if (currentIndex >= images.length) return;
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                triggerFlash(flashPass);
+                nextImage();
+            } else if (e.key === 'ArrowRight') {
+                e.preventDefault();
+                nextImage();
+            } else if (e.key === 'ArrowLeft') {
+                e.preventDefault();
+                prevImage();
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                rejectedImages.push(images[currentIndex]);
+                triggerFlash(flashReject);
+                nextImage();
+            }
+        }
+
+        function triggerFlash(el) {
+            el.classList.remove('opacity-0');
+            setTimeout(() => {
+                el.classList.add('opacity-0');
+            }, 150);
+        }
+
+        function prevImage() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                const filename = images[currentIndex];
+                rejectedImages = rejectedImages.filter(img => img !== filename); // เคลียร์สถานะ Reject เดิมออก (Undo)
+                renderImage();
+            }
+        }
+
+        function nextImage() {
+            currentIndex++;
+            renderImage();
+        }
+
+        function showSummary() {
+            document.removeEventListener('keydown', handleKeyPress);
+            reviewScreen.classList.add('hidden');
+            reviewScreen.classList.remove('flex');
+            
+            summaryScreen.classList.remove('hidden');
+            summaryScreen.classList.add('flex');
+            
+            document.getElementById('reject-count').textContent = rejectedImages.length;
+            
+            if (rejectedImages.length === 0) {
+                document.getElementById('reject-list').innerHTML = '<span class="text-emerald-500">No images were rejected. Everything is perfect!</span>';
+                document.getElementById('confirm-btn').classList.add('hidden');
+            } else {
+                document.getElementById('reject-list').innerHTML = rejectedImages.join('<br>');
+            }
+        }
+
+        async function confirmDeletion() {
+            const btn = document.getElementById('confirm-btn');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+            
+            try {
+                const res = await fetch('/api/review/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames: rejectedImages })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    document.getElementById('reject-list').innerHTML = `<span class="text-emerald-500 font-bold">Successfully deleted ${data.deleted} images and labels.</span>`;
+                    btn.classList.add('hidden');
+                } else {
+                    btn.textContent = 'Error';
+                }
+            } catch (err) {
+                console.error(err);
+                btn.textContent = 'Failed!';
+            }
+        }
+
+        // Boot
+        fetchImages();
+    </script>
+</body>
+</html>

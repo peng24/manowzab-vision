@@ -51,15 +51,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi.staticfiles import StaticFiles
+from app.routers import dataset_review
+
+# ─── Static Mounts ─────────────────────────────────────────────────────────
+train_images_dir = Path("data/train/images")
+train_images_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/data/train/images", StaticFiles(directory=str(train_images_dir)), name="train_images")
+
 # ─── Routers ───────────────────────────────────────────────────────────────
 app.include_router(vision_router.router)
+app.include_router(dataset_review.router)
 
-
-# ─── Root / Health ─────────────────────────────────────────────────────────
+# ─── Web UI Endpoints ─────────────────────────────────────────────────────────
 @app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard() -> HTMLResponse:
     """เปิด Web Dashboard สำหรับทดสอบ API"""
     html_path = Path(__file__).parent.parent / "dashboard.html"
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+@app.get("/review", response_class=HTMLResponse, include_in_schema=False)
+async def review_tool() -> HTMLResponse:
+    """เปิด Web UI สำหรับรีวิว Dataset"""
+    html_path = Path(__file__).parent.parent / "review_tool.html"
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 
