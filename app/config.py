@@ -42,10 +42,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
-    # Gemini API
-    gemini_api_key: str = ""
-
-    # Ollama Local LLM (fallback)
+    # Ollama Local LLM
     ollama_endpoint: str = "http://localhost:11434"
     ollama_model:         str = "qwen2.5"
     ollama_vision_model:  str = "llama3.2-vision"

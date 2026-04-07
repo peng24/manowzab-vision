@@ -2,7 +2,7 @@
 app/utils/nlp.py
 ─────────────────────────────────────────────────────────────────
 สกัดข้อมูลสินค้าจากข้อความภาษาไทย
-Hybrid NLP: Gemini Primary → Ollama Local Fallback
+NLP Engine: Ollama (sole engine)
 รองรับ State Management: โหมดทวนสินค้า (Review Mode) และ Price Conflict
 รองรับการดึงข้อมูลไซส์เสื้อผ้า: อก, ยาว, ไซส์
 """
@@ -59,7 +59,7 @@ _EXTRACT_RESULT = tuple[int | None, int | None, int | None, int | None, str | No
 class LiveDataExtractor:
     """
     คลาสสกัดข้อมูลแบบมี State รองรับ:
-    - Hybrid NLP: Gemini Primary → Ollama Local Fallback
+    - NLP Engine: Ollama (sole engine)
     - ตรวจจับ Price Conflict
     - Review mode (ราคาทวนซ้ำเลขน้อยลงกะทันหัน)
     - ดึงข้อมูลไซส์เสื้อผ้า (chest, length, size_label)
@@ -71,20 +71,8 @@ class LiveDataExtractor:
 
         from app.config import settings
         self._settings = settings
-
-        # ── Gemini client (optional) ──
-        self.client = None
-        if settings.gemini_api_key:
-            try:
-                from google import genai
-                from google.genai import types as genai_types
-                self._genai_types = genai_types
-                self.client = genai.Client(api_key=settings.gemini_api_key)
-                logger.info("[NLP] ✅ Gemini client พร้อม")
-            except Exception as e:
-                logger.warning("[NLP] ⚠️ ไม่สามารถเริ่ม Gemini client: %s", e)
-        else:
-            logger.warning("[NLP] ⚠️ ไม่พบ GEMINI_API_KEY → ใช้ Ollama เท่านั้น")
+        logger.info("[NLP] ✅ Ollama NLP engine พร้อม (endpoint=%s, model=%s)",
+                    settings.ollama_endpoint, settings.ollama_model)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Helper: parse raw dict → safe typed tuple
@@ -133,61 +121,18 @@ class LiveDataExtractor:
         return None, None, None, None, None
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Gemini primary (with Ollama fallback on 429 / any failure)
-    # ─────────────────────────────────────────────────────────────────────────
-    def extract_with_gemini(self, text: str) -> _EXTRACT_RESULT:
-        """Gemini API พร้อม fallback ไปยัง Ollama เมื่อ quota หมดหรือ error"""
-        # ถ้าไม่มี Gemini key → ใช้ Ollama ทันที
-        if not self.client:
-            return self.extract_with_ollama(text)
-
-        try:
-            from google.genai import types as genai_types
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=text,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=_SYSTEM_INSTRUCTION,
-                    temperature=0.0,
-                    response_mime_type="application/json",
-                    response_schema=ProductResponse,
-                ),
-            )
-
-            parsed: ProductResponse = response.parsed
-            if parsed is None:
-                parsed = ProductResponse.model_validate_json(response.text)
-
-            size_label = parsed.size_label
-            if size_label is not None:
-                size_label = size_label.strip() or None
-
-            return parsed.item, parsed.price, parsed.chest, parsed.length, size_label
-
-        except Exception as e:
-            err_str = str(e)
-            # ตรวจจับ 429 quota / spending cap
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower():
-                logger.warning(
-                    "[NLP] ⚠️ Gemini quota exceeded or failed → falling back to Ollama... (%s)", e
-                )
-            else:
-                logger.error("[NLP] ❌ Gemini API Error: %s", e)
-            return self.extract_with_ollama(text)
-
-    # ─────────────────────────────────────────────────────────────────────────
     # Main entry point
     # ─────────────────────────────────────────────────────────────────────────
     def process_text(self, text: str) -> Dict[str, Any] | None:
         """
-        วิเคราะห์ข้อความด้วย Hybrid NLP (Gemini → Ollama)
+        วิเคราะห์ข้อความด้วย Ollama NLP
         พร้อมระบุ state ว่าเป็น 'new', 'review', or 'conflict'
         """
         normalized = replace_thai_numbers(text)
         prompt = f"Spoken Data: {normalized}"
 
-        # 1. เรียก NLP (Gemini หรือ Ollama)
-        code, price, chest, length, size_label = self.extract_with_gemini(prompt)
+        # 1. เรียก NLP ด้วย Ollama
+        code, price, chest, length, size_label = self.extract_with_ollama(prompt)
 
         # หากมีการพูดถึงรหัสใหม่ เปลี่ยน State
         if code is not None:
