@@ -102,7 +102,7 @@ class AudioService:
             self.audio_queue.put(None)
 
     def _transcribe_worker(self):
-        logger.info("[Transcribe] 📝  เริ่มทำงาน (VAD=off, CPU-safe mode)")
+        logger.info("[Transcribe] 📝  เริ่มทำงาน (VAD=on, condition_on_previous_text=off)")
         _model = self.whisper_model
         while not self.stop_event.is_set():
             try:
@@ -120,9 +120,9 @@ class AudioService:
                 segments, _ = _model.transcribe(
                     audio_np,
                     language=self.target_language,
-                    beam_size=5, vad_filter=False, condition_on_previous_text=True,
+                    beam_size=5, vad_filter=True, condition_on_previous_text=False,
                     temperature=0.0,
-                    initial_prompt="รายการที่ 1 รหัส 2 ตัวที่ 3 ราคา 50 บาท 100 บาท ร้อยนึง เอฟเสื้อ",
+                    initial_prompt="รายการที่ 1 รหัส 2 ตัวที่ 3 ราคา 50 บาท 100 บาท ร้อยนึง อก 48 ยาว 30 ตึงหน้าผ้า ไซส์ XL เอฟเสื้อ",
                 )
                 texts = [seg.text.strip() for seg in segments if seg.text.strip()]
                 if texts:
