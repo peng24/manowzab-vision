@@ -42,14 +42,14 @@ def _build_payload(
 import json
 from filelock import FileLock
 
-def _save_local_result(payload: dict) -> None:
-    """บันทึกข้อมูลลงไฟล์ results.json ในโฟลเดอร์รากเพื่อใช้ร่วมกับ Dashboard
+def _save_local_result(payload: dict, output_dir: Path | None = None) -> None:
+    """บันทึกข้อมูลลงไฟล์ results.json ในโฟเดอร์รากเพื่อใช้ร่วมกับ Dashboard
     ใช้ FileLock ป้องกัน Race Condition เมื่อมีหลาย Thread เขียนพร้อมกัน
     """
-    output_dir = settings.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-    results_file = output_dir / "results.json"
-    lock_file = FileLock(str(output_dir / "results.json.lock"))
+    target_dir = output_dir or settings.output_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    results_file = target_dir / "results.json"
+    lock_file = FileLock(str(target_dir / "results.json.lock"))
 
     item_code = payload["product"].get("item_code")
 
@@ -82,12 +82,12 @@ def send_product_event(
     image_path: Path | None,
     session_id: str,
     date_str: str = "",
+    output_dir: Path | None = None,
 ) -> None:
     """
-    บันทึกผลลงไฟล์ในเครื่อง (results.json)
-    แบบไม่ต้องใช้ Webhook แล้ว
+    บันทึกผลลงไฟล์ในเครื่อง (results.json) ในโฟลเดอร์ตามวันที่โดย dynamic
     """
     payload = _build_payload(product, image_path, session_id)
     
     # 1. เก็บรูปลงเครื่องอยู่แล้ว + เพิ่มการเก็บ JSON ลงเครื่อง (Root folder)
-    _save_local_result(payload)
+    _save_local_result(payload, output_dir=output_dir)

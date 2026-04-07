@@ -290,6 +290,37 @@
       main { grid-template-columns: 1fr; }
       #video-card, #control-panel, #log-panel, #gallery-section { grid-column: 1; grid-row: auto; }
     }
+
+    /* ── STREAM TITLE BAR ── */
+    #stream-title-bar {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 32px;
+      background: linear-gradient(90deg, rgba(124,110,245,.12), rgba(94,234,212,.08));
+      border-bottom: 1px solid rgba(124,110,245,.2);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      animation: slideDown .4s ease;
+    }
+    #stream-title-bar.show { display: flex; }
+    @keyframes slideDown { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+    #stream-title-bar .title-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: 1px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      text-transform: uppercase; flex-shrink: 0;
+    }
+    #stream-title-text {
+      flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #stream-date-badge {
+      font-size: 11px; color: var(--muted);
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 2px 8px; flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -314,6 +345,13 @@
     <span id="status-text">กำลังเชื่อมต่อ...</span>
   </div>
 </header>
+
+<!-- ── STREAM TITLE BAR ── -->
+<div id="stream-title-bar">
+  <span class="title-badge">🎬 Live Stream</span>
+  <span id="stream-title-text">—</span>
+  <span id="stream-date-badge">—</span>
+</div>
 
 <!-- ── MAIN ── -->
 <main>
@@ -597,6 +635,9 @@
     }
     prevRunning = running;
 
+    // Stream title bar
+    updateStreamTitle(d);
+
     // Update pricing for existing items
     results.forEach(res => {
        const code = res?.product?.item_code;
@@ -634,6 +675,23 @@
     document.getElementById('status-text').textContent = '⚠️ เชื่อมต่อไม่ได้';
     document.getElementById('stat-state').textContent = 'ERR';
     document.getElementById('stat-state').className = 'stat-value col-red';
+  }
+
+  function updateStreamTitle(d) {
+    const bar   = document.getElementById('stream-title-bar');
+    const title = document.getElementById('stream-title-text');
+    const badge = document.getElementById('stream-date-badge');
+    if (d.running && d.stream_title) {
+      title.textContent = d.stream_title;
+      // Extract date from output_dir string (last path segment = YYYY-MM-DD)
+      if (d.output_dir) {
+        const parts = d.output_dir.replace(/\\/g, '/').split('/');
+        badge.textContent = '📅 ' + (parts[parts.length - 1] || '');
+      }
+      bar.classList.add('show');
+    } else if (!d.running) {
+      bar.classList.remove('show');
+    }
   }
 
   // ── Gallery ─────────────────────────────────────────────────────────────────

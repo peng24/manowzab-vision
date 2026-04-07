@@ -31,6 +31,30 @@ def _ytdlp_get_url(youtube_url: str, fmt: str) -> str:
         raise RuntimeError(f"yt-dlp error:\n{r.stderr.strip()}")
     return r.stdout.strip().splitlines()[0]
 
+
+def _ytdlp_get_metadata(youtube_url: str) -> dict:
+    """Fetch stream title and upload_date from yt-dlp (JSON dump)."""
+    cmd = ["yt-dlp", "--no-playlist", "--dump-json", "--skip-download", youtube_url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, encoding="utf-8")
+        if r.returncode == 0 and r.stdout.strip():
+            import json as _json
+            info = _json.loads(r.stdout.strip().splitlines()[0])
+            title = info.get("title", "") or info.get("fulltitle", "")
+            # upload_date is YYYYMMDD string; for live streams it may be today
+            raw_date = info.get("upload_date") or info.get("release_date") or ""
+            if raw_date and len(raw_date) == 8:
+                date_str = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
+            else:
+                from datetime import date
+                date_str = date.today().isoformat()
+            return {"title": title, "date_str": date_str}
+    except Exception as e:
+        logger.warning("[Stream] yt-dlp metadata error: %s", e)
+    from datetime import date
+    return {"title": "", "date_str": date.today().isoformat()}
+
+
 def get_stream_urls(youtube_url: str) -> tuple[str, str]:
     audio_url = _ytdlp_get_url(youtube_url, "bestaudio/best")
     try:
@@ -64,6 +88,8 @@ class StreamManager:
         self._started_at: float | None = None
         self._vision_buffer: ContinuousVisionBuffer | None = None
         self._session_date_str: str = ""
+        self._stream_title: str = ""
+        self._output_dir: Path = settings.output_dir  # default; overridden on start()
 
     def _ensure_models(self) -> None:
         if self._yolo is None:
@@ -118,10 +144,12 @@ class StreamManager:
             # 4. แคปเจอร์ Vision และส่ง Webhook
             with self._capture_lock:
                 if status == "conflict":
-                    logger.warning("[Review] 🚨 Price Conflict item=#%d (ก่อน: %s, ใหม่: %s)", 
+                    logger.warning("[Review] 🚨 Price Conflict item=#%d (ก่อน: %s, ใหม่: %s)",
                                    item_code, product.get("old_price"), price)
                     send_product_event(
-                        product=product, image_path=None, session_id=self._session_id, date_str=self._session_date_str
+                        product=product, image_path=None,
+                        session_id=self._session_id, date_str=self._session_date_str,
+                        output_dir=self._output_dir,
                     )
                     continue
 
@@ -133,13 +161,16 @@ class StreamManager:
             logger.info("[Vision] ⏳ รอ 3 วินาที เพื่อเก็บเฟรมภาพ (Look-Ahead)...")
             time.sleep(3)
             
-            saved_path = self._vision_buffer.get_best_frame_and_save(item_code, prefix=self._session_date_str)
-            
+            saved_path = self._vision_buffer.get_best_frame_and_save(
+                item_code, prefix=self._session_date_str
+            )
+
             send_product_event(
                 product=product,
                 image_path=saved_path,
                 session_id=self._session_id,
                 date_str=self._session_date_str,
+                output_dir=self._output_dir,
             )
 
 
@@ -152,20 +183,28 @@ class StreamManager:
         logger.info("[Manager] ดึง stream URLs ...")
         audio_url, video_url = get_stream_urls(youtube_url)
 
+        # --- Fetch stream metadata (title + date) ---
+        logger.info("[Manager] ดึง stream metadata ...")
+        meta = _ytdlp_get_metadata(youtube_url)
+        self._stream_title    = meta["title"]
+        self._session_date_str = meta["date_str"]
+        # Build date-specific output directory
+        self._output_dir = Path("data/outputs") / self._session_date_str
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("[Manager] 📁 Output dir: %s | Title: %s", self._output_dir, self._stream_title or '(ไม่พบ)')
+
         self._stop_event = threading.Event()
         self._captured_codes = set()
         self._session_id = session_id
         self._youtube_url = youtube_url
         self._started_at = time.time()
         self._extractor = LiveDataExtractor()
-        
-        from datetime import datetime
-        now = datetime.now()
-        year_be = str(now.year + 543)[-2:]
-        self._session_date_str = f"{now.day}-{now.month}-{year_be}"
 
-        # เริ่ม Vision
-        self._vision_buffer = ContinuousVisionBuffer(self._yolo, buffer_seconds=15, fps=4)
+        # เริ่ม Vision (ส่ง output_dir แบบ dynamic)
+        self._vision_buffer = ContinuousVisionBuffer(
+            self._yolo, buffer_seconds=15, fps=4,
+            output_dir=self._output_dir,
+        )
         self._vision_buffer.start(video_url, self._youtube_url)
 
         # เริ่ม Audio
@@ -202,6 +241,8 @@ class StreamManager:
             "started_at": self._started_at,
             "captured_count": len(self._captured_codes),
             "captured_codes": sorted(self._captured_codes),
+            "stream_title": self._stream_title or None,
+            "output_dir": str(self._output_dir),
         }
 
 stream_manager = StreamManager()

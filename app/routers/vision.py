@@ -59,6 +59,8 @@ class StatusResponse(BaseModel):
     started_at:       float | None
     captured_count:   int
     captured_codes:   list[int]
+    stream_title:     str | None = None
+    output_dir:       str | None = None
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────
@@ -174,8 +176,8 @@ async def get_captured_image(item_code: str) -> FileResponse:
     คืนไฟล์ภาพ JPEG ของสินค้าตาม item_code โดยรองรับการค้นหาแบบมี Prefix นำหน้า
     """
     item_code = item_code.strip()
-    target_dir = settings.output_dir
-    
+    target_dir = stream_manager._output_dir
+
     # Method 1: Exact Match
     exact_path = target_dir / f"{item_code}.jpg"
     if exact_path.exists():
@@ -184,17 +186,18 @@ async def get_captured_image(item_code: str) -> FileResponse:
             media_type="image/jpeg",
             filename=exact_path.name,
         )
-        
-    # Method 2: Prefix Match (ค้นหาแบบ recursive ด้วย rglob เผื่อภาพอยู่ในซับโฟลเดอร์)
-    matches = list(target_dir.rglob(f"*_{item_code}.jpg"))
-    if matches:
-        first_match = matches[0]
-        return FileResponse(
-            path=str(first_match),
-            media_type="image/jpeg",
-            filename=first_match.name,
-        )
-        
+
+    # Method 2: Prefix Match — search date sub-folder and base captured_images dir
+    for search_root in [target_dir, settings.output_dir]:
+        matches = list(search_root.rglob(f"*_{item_code}.jpg")) + list(search_root.rglob(f"{item_code}.jpg"))
+        if matches:
+            first_match = matches[0]
+            return FileResponse(
+                path=str(first_match),
+                media_type="image/jpeg",
+                filename=first_match.name,
+            )
+
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"ยังไม่มีภาพสินค้า #{item_code}",
@@ -206,7 +209,7 @@ class UpdatePriceRequest(BaseModel):
 
 @router.get("/results", summary="ดึงข้อมูลราคาสินค้าจาก local")
 async def get_results() -> list[dict]:
-    results_file = settings.output_dir / "results.json"
+    results_file = stream_manager._output_dir / "results.json"
     if not results_file.exists():
         return []
     try:
@@ -217,7 +220,7 @@ async def get_results() -> list[dict]:
 
 @router.post("/results/{item_code}/price", summary="อัปเดตราคาสินค้า")
 async def update_item_price(item_code: int, req: UpdatePriceRequest):
-    results_file = settings.output_dir / "results.json"
+    results_file = stream_manager._output_dir / "results.json"
     if not results_file.exists():
         raise HTTPException(status_code=404, detail="No results.json found")
     

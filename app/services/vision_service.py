@@ -143,11 +143,13 @@ class ContinuousVisionBuffer:
     """
     ดึงภาพจาก Stream ตลอดเวลาใส่ไว้ใน Deque Buffer อย่างจำกัด
     """
-    def __init__(self, yolo_model: YOLO, buffer_seconds: int = 15, fps: int = 4):
+    def __init__(self, yolo_model: YOLO, buffer_seconds: int = 15, fps: int = 4,
+                 output_dir: Path | None = None):
         self.yolo_model = yolo_model
         self.buffer_seconds = buffer_seconds
         self.fps = fps
         self.max_frames = buffer_seconds * fps
+        self.output_dir: Path = output_dir or settings.output_dir
         
         # ใช้ deque พร้อม maxlen ป้องกัน Memory Leak เด็ดขาด (จำกัดรูปตาม Queue Size)
         self.frame_buffer = collections.deque(maxlen=self.max_frames)
@@ -258,11 +260,10 @@ class ContinuousVisionBuffer:
         และเคลียคิวเพื่อไม่ให้ตั๋วใบถัดไปรับภาพนี้ซ้ำ
         """
         logger.info("[Vision] 🔍 ค้นหาภาพย้อนหลังสำหรับ item=#%d จาก Buffer", item_code)
-        
-        output_dir = settings.output_dir
+
+        output_dir = self.output_dir
         if prefix:
             output_dir = output_dir / prefix
-            
         output_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{prefix}_{item_code}.jpg" if prefix else f"{item_code}.jpg"
         target_path = output_dir / filename
