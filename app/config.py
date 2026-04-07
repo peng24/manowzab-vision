@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     sample_rate: int = 16000
 
     # Computer Vision
-    yolo_model_name: str = "runs/detect/train2/weights/best.pt"
+    yolo_model_name: str = "runs/detect/manowzab_model.pt"
     yolo_tag_class_id: int = 0
     capture_duration: float = 3.0
     capture_fps_target: int = 10

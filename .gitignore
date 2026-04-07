@@ -1,16 +1,27 @@
-# Byte-compiled / optimized / DLL files
+# ════════════════════════════════════════════════════
+#  .gitignore — Manowzab Vision
+# ════════════════════════════════════════════════════
+
+# ─── Python ──────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
+*.pyd
 
-# Distribution / packaging
+# ─── Virtual Environment ─────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
 .Python
+
+# ─── Build / Packaging ───────────────────────────────
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
@@ -22,21 +33,15 @@ var/
 wheels/
 share/python-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.installed.cfg
 MANIFEST
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+# ─── PyInstaller ─────────────────────────────────────
 *.manifest
 *.spec
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
+# ─── Testing / Coverage ──────────────────────────────
 htmlcov/
 .tox/
 .nox/
@@ -51,38 +56,88 @@ coverage.xml
 .pytest_cache/
 cover/
 
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+# ─── Jupyter ─────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
 
-# Models & Big Files
+# ─── Logs ────────────────────────────────────────────
+*.log
+logs/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ─── Secrets & Config ────────────────────────────────
+.env
+.env.local
+.env.*.local
+# เก็บ .env.example ไว้เป็น template สำหรับ contributor
+
+# ─── ML Models & Large Binary Files ─────────────────
 *.pt
 *.pth
 *.onnx
 *.engine
 *.bin
+*.weights
+*.h5
+*.pkl
 models/
 
-# Project Specific (Manowzab Vision)
-captured_images/
-data/
-*.log
-runs/
-datasets/
-
-# Video Files
+# ─── Video / Audio Files ─────────────────────────────
 *.mp4
 *.avi
 *.mkv
-# IDE / OS specific
+*.mov
+*.flv
+*.webm
+*.mp3
+*.wav
+
+# ─── Image Datasets & Output ─────────────────────────
+# ข้อมูลดิบ / ผลลัพธ์ที่ generate ได้
+captured_images/
+data/raw_frames/
+data/needs_training/
+data/needs_training-BK/
+data/train/images/
+data/train/labels/
+
+# เก็บ data/data.yaml และ README.roboflow.txt ไว้ (config สำคัญ)
+!data/data.yaml
+!data/README.roboflow.txt
+
+# ─── YOLO Training Runs ──────────────────────────────
+runs/
+
+# ─── Active Learning Dumps ───────────────────────────
+needs_training/
+al_*.jpg
+
+# ─── Installer / Package Cache ───────────────────────
+*.installer
+
+# ─── OS Specific ─────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ─── IDE / Editor ────────────────────────────────────
 .vscode/
 .idea/
-.DS_Store
-Thumbs.db
 *.swp
 *.swo
+*~
+.project
+.classpath
+.settings/
+
+# ─── Temporary Files ─────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig

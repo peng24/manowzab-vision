@@ -222,7 +222,8 @@ class ContinuousVisionBuffer:
                     s, annotated = score_frame(frame, self.yolo_model)
                     
                     # Pre-encode JPEG for the MJPEG stream to save CPU
-                    ret_enc, buffer_enc = cv2.imencode('.jpg', annotated)
+                    # ใช้ frame ดิบ (ไม่มีกรอบ) เพื่อให้ preview สะอาด
+                    ret_enc, buffer_enc = cv2.imencode('.jpg', frame)
                     frame_bytes = buffer_enc.tobytes() if ret_enc else None
                     
                     # ロックก่อนจัดการคิว
