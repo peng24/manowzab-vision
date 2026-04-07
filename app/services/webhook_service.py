@@ -40,33 +40,40 @@ def _build_payload(
 
 
 import json
+from filelock import FileLock
 
 def _save_local_result(payload: dict) -> None:
-    """บันทึกข้อมูลลงไฟล์ results.json ในโฟลเดอร์รากเพื่อใช้ร่วมกับ Dashboard"""
+    """บันทึกข้อมูลลงไฟล์ results.json ในโฟลเดอร์รากเพื่อใช้ร่วมกับ Dashboard
+    ใช้ FileLock ป้องกัน Race Condition เมื่อมีหลาย Thread เขียนพร้อมกัน
+    """
     output_dir = settings.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     results_file = output_dir / "results.json"
+    lock_file = FileLock(str(output_dir / "results.json.lock"))
 
-    data = []
-    if results_file.exists():
-        try:
-            data = json.loads(results_file.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-
-    # ตรวจสอบว่าเคยมีสินค้ารหัสนี้แล้วหรือยัง (ให้ Update ถ้าเคยมีแล้วเช่นอัปเดตสถานะ review/conflict)
     item_code = payload["product"].get("item_code")
-    updated = False
-    for i, item in enumerate(data):
-        if item.get("product", {}).get("item_code") == item_code:
-            data[i] = payload
-            updated = True
-            break
 
-    if not updated:
-        data.append(payload)
+    with lock_file:
+        data = []
+        if results_file.exists():
+            try:
+                data = json.loads(results_file.read_text(encoding="utf-8"))
+            except Exception:
+                data = []  # ไฟล์เสียหาย → เริ่มใหม่
 
-    results_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        # ตรวจสอบว่าเคยมีสินค้ารหัสนี้แล้วหรือยัง (Update ถ้าเคยมีแล้ว)
+        updated = False
+        for i, item in enumerate(data):
+            if item.get("product", {}).get("item_code") == item_code:
+                data[i] = payload
+                updated = True
+                break
+
+        if not updated:
+            data.append(payload)
+
+        results_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
     logger.info("[Local] 💾 บันทึกข้อมูลสินค้า #%s ลง results.json เรียบร้อย", item_code)
 
 

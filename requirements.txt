@@ -1,10 +1,11 @@
 # ─── Core API ──────────────────────────────────────────────────────────────
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-python-multipart>=0.0.9      # รองรับ form-data (optional)
+python-multipart>=0.0.9      # form-data support (optional)
 
 # ─── HTTP Client (Webhook) ─────────────────────────────────────────────────
 httpx>=0.27.0
+filelock>=3.13.0             # prevent race condition on results.json writes
 
 # ─── Config / Environment ─────────────────────────────────────────────────
 pydantic-settings>=2.2.0
@@ -19,7 +20,7 @@ ffmpeg-python>=0.2.0
 
 # ─── Computer Vision ───────────────────────────────────────────────────────
 opencv-python-headless>=4.9.0
-ultralytics>=8.1.0            # YOLOv8 (auto-download weights ครั้งแรก)
+ultralytics>=8.1.0           # YOLOv8 (auto-downloads weights on first run)
 
 # ─── Numerics ──────────────────────────────────────────────────────────────
 numpy>=1.24.0

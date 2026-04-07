@@ -31,7 +31,7 @@ def variance_of_laplacian(frame_bgr: np.ndarray) -> float:
 
 # ─── OCR Async Queue ───────────────────────────────────────────────────────
 ocr_queue = queue.Queue(maxsize=20)
-ocr_results_history = collections.deque(maxlen=20)
+ocr_results_history = collections.deque(maxlen=100)  # ~5-10 นาทีของ OCR hits ป้องกัน Memory Leak
 ocr_reader = None
 ocr_thread = None
 

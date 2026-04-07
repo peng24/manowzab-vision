@@ -72,34 +72,75 @@ class AudioService:
             self._t_transcribe.join(timeout=5)
 
     def _audio_producer(self, audio_url: str):
-        cmd = [
-            "ffmpeg", "-loglevel", "quiet",
-            "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
-            "-i", audio_url,
-            "-vn", "-acodec", "pcm_s16le",
-            "-ar", str(settings.sample_rate),
-            "-ac", "1", "-f", "s16le", "pipe:1",
-        ]
-        logger.info("[Audio] 🎙️ ffmpeg เริ่มสตรีม")
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        buf = b""
-        try:
-            while not self.stop_event.is_set():
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    logger.warning("[Audio] ffmpeg stream หยุดแล้ว")
+        """ดึง PCM Audio จาก ffmpeg พร้อม Auto-Reconnect เมื่อสตรีมขาด"""
+        MAX_RETRIES   = 10   # จำนวนครั้งสูงสุดที่ retry ก่อนยอมแพ้
+        RETRY_DELAY   = 3.0  # วินาทีเริ่มต้น (cap ที่ 30 วิ)
+        MAX_DELAY     = 30.0
+
+        def _build_cmd(url: str) -> list[str]:
+            return [
+                "ffmpeg", "-loglevel", "quiet",
+                "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+                "-i", url,
+                "-vn", "-acodec", "pcm_s16le",
+                "-ar", str(settings.sample_rate),
+                "-ac", "1", "-f", "s16le", "pipe:1",
+            ]
+
+        consecutive_failures = 0
+        delay = RETRY_DELAY
+
+        while not self.stop_event.is_set():
+            logger.info("[Audio] 🎙️ ffmpeg เริ่มสตรีม (attempt %d)", consecutive_failures + 1)
+            proc = subprocess.Popen(_build_cmd(audio_url), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            buf  = b""
+            stream_ok = False  # ถ้า True → ได้ข้อมูลจริงอย่างน้อย 1 chunk
+
+            try:
+                while not self.stop_event.is_set():
+                    chunk = proc.stdout.read(4096)
+                    if not chunk:
+                        # Stream หยุด / ขาดหาย
+                        logger.warning("[Audio] ⚠️ ffmpeg stream ขาด กำลัง reconnect...")
+                        break  # ออกจาก inner loop → outer loop จะ restart
+
+                    stream_ok = True
+                    buf += chunk
+                    while len(buf) >= settings.chunk_bytes:
+                        try:
+                            self.audio_queue.put_nowait(buf[:settings.chunk_bytes])
+                        except queue.Full:
+                            pass
+                        buf = buf[settings.chunk_bytes:]
+
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+            if self.stop_event.is_set():
+                break
+
+            # ถ้า stream เคยได้ข้อมูลแล้ว reset นับ failure
+            if stream_ok:
+                consecutive_failures = 0
+                delay = RETRY_DELAY
+            else:
+                consecutive_failures += 1
+                logger.warning("[Audio] Reconnect attempt %d/%d", consecutive_failures, MAX_RETRIES)
+                if consecutive_failures >= MAX_RETRIES:
+                    logger.error("[Audio] ❌ เกิน %d ครั้ง → หยุด Audio Pipeline", MAX_RETRIES)
                     break
-                buf += chunk
-                while len(buf) >= settings.chunk_bytes:
-                    try:
-                        self.audio_queue.put_nowait(buf[:settings.chunk_bytes])
-                    except queue.Full:
-                        pass
-                    buf = buf[settings.chunk_bytes:]
-        finally:
-            proc.terminate()
-            self.stop_event.set()
-            self.audio_queue.put(None)
+
+            # รอก่อน retry (exponential backoff)
+            self.stop_event.wait(timeout=delay)
+            delay = min(delay * 1.5, MAX_DELAY)
+
+        # ส่งสัญญาณหยุดให้ transcribe worker
+        self.stop_event.set()
+        self.audio_queue.put(None)
 
     def _transcribe_worker(self):
         logger.info("[Transcribe] 📝  เริ่มทำงาน (VAD=on, condition_on_previous_text=off)")

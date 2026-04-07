@@ -8,7 +8,9 @@ app/utils/nlp.py
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+from pydantic import BaseModel
 
 from google import genai
 from google.genai import types
@@ -16,6 +18,15 @@ from google.genai import types
 from app.utils.thai_numbers import replace_thai_numbers, thai_digit_to_arabic
 
 logger = logging.getLogger(__name__)
+
+# ─── Pydantic schema สำหรับ Gemini Structured Output ─────────────────────────
+class GeminiProductResponse(BaseModel):
+    item:       Optional[int]   = None
+    price:      Optional[int]   = None
+    chest:      Optional[int]   = None
+    length:     Optional[int]   = None
+    size_label: Optional[str]   = None
+
 
 class LiveDataExtractor:
     """
@@ -80,50 +91,23 @@ class LiveDataExtractor:
                     system_instruction=self.system_instruction,
                     temperature=0.0,
                     response_mime_type="application/json",
+                    response_schema=GeminiProductResponse,
                 ),
             )
-            
-            output_text = response.text.strip()
-            # อาจมี Markdown โอบล้อม ให้เอาออกถ้าจำเป็น (แต่ response_mime_type มักจะป้องกันได้)
-            if output_text.startswith("```json"):
-                output_text = output_text[7:]
-            if output_text.endswith("```"):
-                output_text = output_text[:-3]
 
-            data = json.loads(output_text.strip())
-            
-            code = data.get("item")
-            price = data.get("price")
-            chest = data.get("chest")
-            length = data.get("length")
-            size_label = data.get("size_label")
-            
-            # แปลงเป็น int อย่างปลอดภัย
-            try:
-                code = int(code) if code is not None else None
-            except (ValueError, TypeError):
-                code = None
-                
-            try:
-                price = int(price) if price is not None else None
-            except (ValueError, TypeError):
-                price = None
+            # Gemini คืน parsed object ให้เลย ไม่ต้อง decode JSON เอง
+            parsed: GeminiProductResponse = response.parsed
 
-            try:
-                chest = int(chest) if chest is not None else None
-            except (ValueError, TypeError):
-                chest = None
+            if parsed is None:
+                # Fallback: parse จาก text ถ้า parsed ไม่พร้อม
+                parsed = GeminiProductResponse.model_validate_json(response.text)
 
-            try:
-                length = int(length) if length is not None else None
-            except (ValueError, TypeError):
-                length = None
-
-            # size_label คือ string เช่น "XL", "L", "M"
+            # size_label: ทำ strip และเปลี่ยนเป็น None ถ้าว่าง
+            size_label = parsed.size_label
             if size_label is not None:
-                size_label = str(size_label).strip() or None
+                size_label = size_label.strip() or None
 
-            return code, price, chest, length, size_label
+            return parsed.item, parsed.price, parsed.chest, parsed.length, size_label
 
         except Exception as e:
             logger.error(f"[NLP] ❌ Gemini API Error / JSON Parsing: {e}")
@@ -158,7 +142,15 @@ class LiveDataExtractor:
         conflict = False
         old_price = None
         
-        if active_code > self.highest_item_number:
+        # Outlier Rejection: ถ้า STT หลอนเลขใหญ่มากผิดปกติ (> 100 จากค่าสูงสุดปัจจุบัน)
+        # ให้ไม่อัปเดต highest_item_number เพื่อป้องกัน review mode logic พัง
+        jump = active_code - self.highest_item_number
+        if jump > 100:
+            logger.warning(
+                "[NLP] ⚠️ Outlier item code ตรวจพบ: %d (jump=+%d) → ข้ามการอัปเดต highest",
+                active_code, jump,
+            )
+        elif active_code > self.highest_item_number:
             self.highest_item_number = active_code
         elif active_code < self.highest_item_number and (self.highest_item_number - active_code) > 5:
             # เลขลดลงเยอะผิดปกติ -> เข้าโหมด Review!
