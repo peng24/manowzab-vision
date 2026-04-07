@@ -23,6 +23,7 @@ class AudioService:
         self._t_audio = None
         self._t_transcribe = None
         self._cuda_failed = False
+        self._proc: subprocess.Popen | None = None  # ffmpeg process ปัจจุบัน
         
     def ensure_model(self):
         if self.whisper_model is None:
@@ -66,10 +67,26 @@ class AudioService:
 
     def stop(self):
         self.stop_event.set()
+
+        # ครอบ ffmpeg ทันที เพื่อให้ proc.stdout.read() unblock
+        proc = self._proc
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=3)
+            except Exception:
+                pass
+
+        # ส่ง sentinel ให้ transcribe worker ออก loop
+        try:
+            self.audio_queue.put_nowait(None)
+        except queue.Full:
+            pass
+
         if self._t_audio and self._t_audio.is_alive():
-            self._t_audio.join(timeout=5)
+            self._t_audio.join(timeout=6)
         if self._t_transcribe and self._t_transcribe.is_alive():
-            self._t_transcribe.join(timeout=5)
+            self._t_transcribe.join(timeout=6)
 
     def _audio_producer(self, audio_url: str):
         """ดึง PCM Audio จาก ffmpeg พร้อม Auto-Reconnect เมื่อสตรีมขาด"""
@@ -93,6 +110,7 @@ class AudioService:
         while not self.stop_event.is_set():
             logger.info("[Audio] 🎙️ ffmpeg เริ่มสตรีม (attempt %d)", consecutive_failures + 1)
             proc = subprocess.Popen(_build_cmd(audio_url), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._proc = proc  # เก็บไว้เพื่อให้ stop() kill ได้ทันที
             buf  = b""
             stream_ok = False  # ถ้า True → ได้ข้อมูลจริงอย่างน้อย 1 chunk
 

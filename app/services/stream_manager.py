@@ -18,7 +18,7 @@ from ultralytics import YOLO
 
 from app.config import settings
 from app.utils.nlp import LiveDataExtractor
-from app.services.vision_service import ContinuousVisionBuffer, ocr_results_history
+from app.services.vision_service import ContinuousVisionBuffer
 from app.services.webhook_service import send_product_event
 from app.services.audio_service import AudioService
 
@@ -120,18 +120,8 @@ class StreamManager:
             except queue.Empty:
                 continue
 
-            # 2. ค้นหา OCR ในหน้าต่างเวลาใกล้ๆ (+/- 4 วินาที)
-            matched_ocr = []
-            for ocr_ts, ocr_text in list(ocr_results_history):
-                if abs(spoken_ts - ocr_ts) <= 4.0:
-                    matched_ocr.append(ocr_text)
-                    
-            ocr_context = " ".join(matched_ocr)
-            if ocr_context:
-                logger.info("[Multimodal] 🔗 ซิงค์พบ Visual Data: %s", ocr_context)
-            
-            # 3. ส่งต่อให้ Gemini ประมวลผลแบบ Multimodal (ส่งออดิโอ + บริบทภาพ)
-            product = self._extractor.process_text(spoken_text, ocr_context)
+            # 2. ส่งต่อให้ NLP ประมวลผล (Hybrid: Gemini → Ollama)
+            product = self._extractor.process_text(spoken_text)
             if not product:
                 continue
 
@@ -227,11 +217,28 @@ class StreamManager:
         if self._vision_buffer:
             self._vision_buffer.stop()
         self._audio_service.stop()
-        
+
         if self._t_multimodal and self._t_multimodal.is_alive():
             self._t_multimodal.join(timeout=5)
-            
+
+        # หยุด Ollama model (unload จาก VRAM/RAM)
+        try:
+            model = settings.ollama_model
+            result = subprocess.run(
+                ["ollama", "stop", model],
+                capture_output=True, text=True, timeout=8,
+            )
+            if result.returncode == 0:
+                logger.info("[Manager] 🦙 Ollama หยุดโมเดล '%s' เรียบร้อย", model)
+            else:
+                logger.warning("[Manager] ⚠️ ollama stop: %s", result.stderr.strip() or "no output")
+        except FileNotFoundError:
+            logger.warning("[Manager] ⚠️ ไม่พบคำสั่ง ollama — ข้ามการหยุด")
+        except Exception as e:
+            logger.warning("[Manager] ⚠️ ollama stop error: %s", e)
+
         logger.info("[Manager] 🛑 Pipeline หยุดแล้ว")
+
 
     def status(self) -> dict:
         return {

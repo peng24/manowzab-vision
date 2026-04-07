@@ -60,6 +60,10 @@ train_images_dir = Path("data/train/images")
 train_images_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/data/train/images", StaticFiles(directory=str(train_images_dir)), name="train_images")
 
+needs_training_dir = Path("data/needs_training")
+needs_training_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/data/needs_training", StaticFiles(directory=str(needs_training_dir)), name="needs_training")
+
 # ─── Routers ───────────────────────────────────────────────────────────────
 app.include_router(vision_router.router)
 app.include_router(dataset_review.router)

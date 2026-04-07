@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # Gemini API
     gemini_api_key: str = ""
 
+    # Ollama Local LLM (fallback)
+    ollama_endpoint: str = "http://localhost:11434"
+    ollama_model:         str = "qwen2.5"
+    ollama_vision_model:  str = "llama3.2-vision"
+
     @property
     def bytes_per_sample(self) -> int:
         return 2  # int16

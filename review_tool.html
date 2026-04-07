@@ -1,233 +1,510 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dataset Review Tool</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; overflow: hidden; }
-        .kbd { background: #334155; padding: 0.2rem 0.5rem; border-radius: 0.25rem; font-family: monospace; border: 1px solid #475569; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Curation — Manowzab Vision</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #080a12;
+      --surface: rgba(255,255,255,.04);
+      --border:  rgba(255,255,255,.08);
+      --accent:  #7c6ef5;
+      --green:   #22c55e;
+      --red:     #f87171;
+      --yellow:  #fbbf24;
+      --text:    #e2e8f0;
+      --muted:   #475569;
+    }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh; width: 100vw;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      background-image:
+        radial-gradient(ellipse 60% 40% at 10% -10%, rgba(124,110,245,.12) 0%, transparent 55%),
+        radial-gradient(ellipse 50% 35% at 90% 110%, rgba(34,197,94,.08) 0%, transparent 55%);
+    }
+
+    /* ── HEADER ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 28px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(8,10,18,.9);
+      backdrop-filter: blur(16px);
+      flex-shrink: 0;
+      gap: 16px;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), #22c55e);
+      display: flex; align-items: center; justify-content: center; font-size: 16px;
+    }
+    .logo h1 { font-size: 16px; font-weight: 700; }
+    .logo span { font-size: 11px; color: var(--muted); margin-left: 4px; }
+    #header-stats {
+      display: flex; gap: 10px; align-items: center; font-size: 12px;
+    }
+    .hstat {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 5px 12px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .hstat .n { font-size: 16px; font-weight: 700; }
+    .hstat.green .n { color: var(--green); }
+    .hstat.red   .n { color: var(--red);   }
+    .hstat.yellow .n { color: var(--yellow); }
+    #btn-back-hub {
+      font-size: 12px; padding: 6px 14px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--muted); cursor: pointer;
+      text-decoration: none; transition: all .2s;
+    }
+    #btn-back-hub:hover { color: var(--text); border-color: rgba(255,255,255,.2); }
+
+    /* ── SCREENS ── */
+    .screen { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; }
+    .screen.active { display: flex; }
+
+    /* loading */
+    #loading-screen .spinner {
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 3px solid var(--border); border-top-color: var(--accent);
+      animation: spin .8s linear infinite; margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* empty */
+    #empty-screen .icon { font-size: 64px; margin-bottom: 16px; }
+    #empty-screen h2 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    #empty-screen p { font-size: 14px; color: var(--muted); }
+
+    /* ── REVIEW SCREEN ── */
+    #review-screen { padding: 0 24px 16px; max-width: 1100px; width: 100%; margin: 0 auto; }
+
+    /* Progress bar */
+    #progress-wrap {
+      width: 100%; display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px;
+    }
+    #progress-meta {
+      display: flex; justify-content: space-between; font-size: 12px; color: var(--muted);
+    }
+    #progress-bar-bg {
+      width: 100%; height: 4px; background: rgba(255,255,255,.08); border-radius: 4px; overflow: hidden;
+    }
+    #progress-bar-fill {
+      height: 100%; background: linear-gradient(90deg, var(--accent), #22c55e);
+      border-radius: 4px; transition: width .3s ease;
+    }
+
+    /* Image viewer */
+    #viewer-wrap {
+      position: relative; flex: 1;
+      background: rgba(0,0,0,.5); border-radius: 14px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 0;
+    }
+    #img-display {
+      max-width: 100%; max-height: 100%; object-fit: contain;
+      display: block;
+      transition: opacity .15s;
+    }
+    /* Flash overlays */
+    .flash {
+      position: absolute; inset: 0; opacity: 0; pointer-events: none;
+      transition: opacity .15s;
+    }
+    #flash-accept { background: rgba(34,197,94,.25); }
+    #flash-reject { background: rgba(248,113,113,.25); }
+    .flash.show    { opacity: 1; }
+
+    /* Decision stamp */
+    #stamp {
+      position: absolute; top: 18px; right: 18px;
+      font-size: 13px; font-weight: 700; letter-spacing: 1px;
+      padding: 6px 14px; border-radius: 8px;
+      border: 2px solid;
+      display: none;
+      text-transform: uppercase;
+    }
+    #stamp.accept { color: var(--green); border-color: var(--green); background: rgba(34,197,94,.12); display: block; }
+    #stamp.reject { color: var(--red);   border-color: var(--red);   background: rgba(248,113,113,.12); display: block; }
+
+    /* Filename bar */
+    #filename-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 10px; font-size: 12px;
+    }
+    #filename-text { color: var(--muted); font-family: 'Courier New', monospace; }
+    #img-counter { color: var(--text); font-weight: 600; }
+
+    /* ── CONTROLS ── */
+    #controls {
+      display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px;
+      margin-top: 14px; flex-shrink: 0;
+    }
+    .ctrl-btn {
+      padding: 10px 8px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--surface); cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+      color: var(--text); font-family: inherit; font-size: 12px;
+      transition: all .2s; user-select: none;
+    }
+    .ctrl-btn .label { font-weight: 700; font-size: 13px; }
+    .ctrl-btn .kbd   { font-size: 10px; color: var(--muted); }
+    .ctrl-btn:hover  { border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.08); }
+
+    #btn-accept { border-color: rgba(34,197,94,.35); color: var(--green); }
+    #btn-accept:hover { background: rgba(34,197,94,.12); }
+    #btn-reject { border-color: rgba(248,113,113,.35); color: var(--red); }
+    #btn-reject:hover { background: rgba(248,113,113,.12); }
+
+    /* ── DONE SCREEN ── */
+    #done-screen { text-align: center; }
+    #done-screen .icon { font-size: 64px; margin-bottom: 20px; }
+    #done-screen h2 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    #done-screen p  { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+    .done-stats {
+      display: flex; gap: 20px; justify-content: center; margin-bottom: 32px;
+    }
+    .done-stat {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px 32px; text-align: center;
+    }
+    .done-stat .n { font-size: 36px; font-weight: 800; }
+    .done-stat .l { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .done-btn {
+      padding: 12px 28px; border-radius: 10px; border: none;
+      font-family: inherit; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all .2s;
+    }
+    #btn-done-again { background: var(--surface); color: var(--text); border: 1px solid var(--border); margin-right: 10px; }
+    #btn-done-again:hover { background: rgba(255,255,255,.08); }
+    #btn-done-hub   { background: linear-gradient(135deg, var(--accent), #5b50d6); color: #fff; }
+    #btn-done-hub:hover { box-shadow: 0 6px 20px rgba(124,110,245,.4); }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(20,22,36,.95); border: 1px solid var(--border);
+      border-radius: 10px; padding: 10px 20px; font-size: 13px;
+      backdrop-filter: blur(12px); display: none;
+      align-items: center; gap: 8px;
+      animation: fadeIn .2s ease;
+    }
+    #toast.show { display: flex; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  </style>
 </head>
-<body class="h-screen w-screen flex flex-col items-center justify-center">
+<body>
 
-    <!-- Loading State -->
-    <div id="loading-screen" class="text-xl text-slate-400">Loading dataset...</div>
-
-    <!-- Empty State -->
-    <div id="empty-screen" class="hidden text-center">
-        <h2 class="text-3xl font-bold text-slate-200 mb-2">🎉 All Done!</h2>
-        <p class="text-slate-400">No more images left to review.</p>
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">✂️</div>
+    <div>
+      <h1>Image Curation <span>data/needs_training → data/train/images</span></h1>
     </div>
+  </div>
+  <div id="header-stats">
+    <div class="hstat yellow"><span class="n" id="hs-remaining">—</span> <span>รอคัด</span></div>
+    <div class="hstat green" ><span class="n" id="hs-accepted">—</span> <span>เอา</span></div>
+    <div class="hstat red"   ><span class="n" id="hs-rejected">—</span> <span>ลบ</span></div>
+  </div>
+  <a href="/" id="btn-back-hub">← กลับหน้าหลัก</a>
+</header>
 
-    <!-- Review System -->
-    <div id="review-screen" class="hidden flex-col items-center justify-center w-full max-w-4xl px-4">
-        <div class="flex justify-between w-full mb-4 items-end">
-            <div>
-                <h1 class="text-2xl font-bold text-white">Review Dataset</h1>
-                <p id="filename-display" class="text-slate-400 text-sm">image.jpg</p>
-            </div>
-            <div class="text-right">
-                <span class="text-slate-400 text-sm">Progress</span>
-                <div class="text-xl font-bold text-indigo-400"><span id="current-idx">0</span> / <span id="total-imgs">0</span></div>
-            </div>
-        </div>
+<!-- LOADING -->
+<div id="loading-screen" class="screen active">
+  <div class="spinner"></div>
+  <div style="color:var(--muted);font-size:14px;">กำลังโหลดรูปภาพ...</div>
+</div>
 
-        <div class="relative w-full aspect-video bg-slate-900 rounded-xl overflow-hidden shadow-2xl border border-slate-700 flex items-center justify-center">
-            <img id="image-viewer" src="" alt="Dataset Image" class="max-w-full max-h-full object-contain">
-            
-            <!-- Quick Flash Indicators -->
-            <div id="flash-pass" class="absolute inset-0 bg-emerald-500/20 opacity-0 transition-opacity duration-300 pointer-events-none"></div>
-            <div id="flash-reject" class="absolute inset-0 bg-rose-500/20 opacity-0 transition-opacity duration-300 pointer-events-none"></div>
-        </div>
+<!-- EMPTY -->
+<div id="empty-screen" class="screen">
+  <div class="icon">🎉</div>
+  <h2>ไม่มีรูปภาพที่รอคัด</h2>
+  <p style="margin-top:8px;">โฟลเดอร์ <code style="color:var(--accent)">data/needs_training</code> ว่างเปล่า<br>รอให้ระบบบันทึกรูปใหม่แล้วลองอีกครั้ง</p>
+  <a href="/" style="margin-top:24px;color:var(--accent);font-size:13px;">← กลับหน้าหลัก</a>
+</div>
 
-        <!-- Controls Guide -->
-        <div class="grid grid-cols-3 gap-4 w-full mt-8">
-            <div class="bg-slate-800 p-4 rounded-lg text-center border border-emerald-900/50">
-                <div class="text-emerald-400 font-bold mb-2">PASS (OK)</div>
-                <div class="text-sm text-slate-400">Press <span class="kbd">Enter</span></div>
-            </div>
-            <div class="bg-slate-800 p-3 rounded-lg text-center border border-slate-700">
-                <div class="text-slate-300 font-bold mb-1 text-sm">BACK</div>
-                <div class="text-xs text-slate-400"><span class="kbd">Left Arrow</span></div>
-            </div>
-            <div class="bg-slate-800 p-3 rounded-lg text-center border border-slate-700">
-                <div class="text-slate-300 font-bold mb-1 text-sm">SKIP</div>
-                <div class="text-xs text-slate-400"><span class="kbd">Right Arrow</span></div>
-            </div>
-            <div class="bg-slate-800 p-3 rounded-lg text-center border border-rose-900/50">
-                <div class="text-rose-400 font-bold mb-1 text-sm">REJECT</div>
-                <div class="text-xs text-slate-400"><span class="kbd">Delete</span></div>
-            </div>
-        </div>
+<!-- REVIEW -->
+<div id="review-screen" class="screen" style="padding-top:16px;">
+  <div id="progress-wrap">
+    <div id="progress-meta">
+      <span id="progress-label">ดำเนินการแล้ว 0 / 0</span>
+      <span id="resume-badge" style="color:var(--yellow);display:none;">⚡ ต่อจากครั้งก่อน</span>
     </div>
+    <div id="progress-bar-bg"><div id="progress-bar-fill" style="width:0%"></div></div>
+  </div>
 
-    <!-- Summary Screen -->
-    <div id="summary-screen" class="hidden flex-col items-center justify-center w-full max-w-2xl px-4 text-center">
-        <h2 class="text-3xl font-bold text-white mb-2">Review Complete</h2>
-        <p class="text-slate-400 mb-8">You have reviewed all available images.</p>
-        
-        <div class="bg-slate-800 w-full rounded-xl border border-slate-700 p-6 mb-8 text-left">
-            <h3 class="text-lg font-bold text-rose-400 mb-4 border-b border-slate-700 pb-2">Destruction List</h3>
-            <p class="text-slate-300 mb-2">The following <span id="reject-count" class="font-bold text-white">0</span> images and their labels will be permanently deleted from the hard drive:</p>
-            <div id="reject-list" class="max-h-48 overflow-y-auto text-sm text-slate-500 font-mono bg-slate-900 p-3 rounded">
-                <!-- Rejected filenames go here -->
-            </div>
-        </div>
+  <div id="viewer-wrap">
+    <img id="img-display" src="" alt="review image" />
+    <div class="flash" id="flash-accept"></div>
+    <div class="flash" id="flash-reject"></div>
+    <div id="stamp"></div>
+  </div>
 
-        <div class="flex gap-4">
-            <button onclick="location.reload()" class="px-6 py-3 bg-slate-700 hover:bg-slate-600 rounded-lg font-bold transition-colors">Review Again</button>
-            <button id="confirm-btn" onclick="confirmDeletion()" class="px-6 py-3 bg-rose-600 hover:bg-rose-500 rounded-lg font-bold transition-colors shadow-lg shadow-rose-900/20">Confirm Delete</button>
-        </div>
-    </div>
+  <div id="filename-bar">
+    <span id="filename-text">—</span>
+    <span id="img-counter">0 / 0</span>
+  </div>
 
-    <!-- Script Logic -->
-    <script>
-        let images = [];
-        let currentIndex = 0;
-        let rejectedImages = [];
+  <div id="controls">
+    <button class="ctrl-btn" id="btn-prev" onclick="goPrev()">
+      <span class="label">◀ ย้อน</span>
+      <span class="kbd">← Arrow Left</span>
+    </button>
+    <button class="ctrl-btn" id="btn-accept" onclick="decide('accept')">
+      <span class="label">✅ เอา</span>
+      <span class="kbd">Enter / →</span>
+    </button>
+    <button class="ctrl-btn" id="btn-reject" onclick="decide('reject')">
+      <span class="label">🗑️ ลบ</span>
+      <span class="kbd">Delete / Backspace</span>
+    </button>
+    <button class="ctrl-btn" id="btn-skip" onclick="goNext()" style="color:var(--muted);">
+      <span class="label">⏭ ข้าม</span>
+      <span class="kbd">Space</span>
+    </button>
+  </div>
+</div>
 
-        // DOM Elements
-        const loadingScreen = document.getElementById('loading-screen');
-        const emptyScreen = document.getElementById('empty-screen');
-        const reviewScreen = document.getElementById('review-screen');
-        const summaryScreen = document.getElementById('summary-screen');
-        
-        const imageViewer = document.getElementById('image-viewer');
-        const filenameDisplay = document.getElementById('filename-display');
-        const currentIdxDisplay = document.getElementById('current-idx');
-        const totalImgsDisplay = document.getElementById('total-imgs');
-        
-        const flashPass = document.getElementById('flash-pass');
-        const flashReject = document.getElementById('flash-reject');
+<!-- DONE -->
+<div id="done-screen" class="screen">
+  <div class="icon">🏁</div>
+  <h2>คัดรูปเสร็จแล้ว!</h2>
+  <p>คัดแยกรูปภาพทั้งหมดเสร็จสิ้น ข้อมูลพร้อมสำหรับการ Train</p>
+  <div class="done-stats">
+    <div class="done-stat"><div class="n" style="color:var(--green)" id="done-accepted">0</div><div class="l">รูปเอาแล้ว<br>(ย้ายไป train/images)</div></div>
+    <div class="done-stat"><div class="n" style="color:var(--red)"   id="done-rejected">0</div><div class="l">รูปลบแล้ว</div></div>
+  </div>
+  <div>
+    <button class="done-btn" id="btn-done-again" onclick="resetAndReload()">🔄 เริ่มใหม่</button>
+    <button class="done-btn" id="btn-done-hub"   onclick="location.href='/'">🏠 หน้าหลัก</button>
+  </div>
+</div>
 
-        // Fetch Images
-        async function fetchImages() {
-            try {
-                const res = await fetch('/api/review/images');
-                const data = await res.json();
-                images = data.images;
-                
-                loadingScreen.classList.add('hidden');
-                
-                if (images.length === 0) {
-                    emptyScreen.classList.remove('hidden');
-                } else {
-                    totalImgsDisplay.textContent = images.length;
-                    reviewScreen.classList.remove('hidden');
-                    reviewScreen.classList.add('flex');
-                    renderImage();
-                    
-                    // Attach Keyboard Listener
-                    document.addEventListener('keydown', handleKeyPress);
-                }
-            } catch (err) {
-                loadingScreen.textContent = 'Failed to load dataset.';
-                console.error(err);
-            }
-        }
+<div id="toast"></div>
 
-        function renderImage() {
-            if (currentIndex >= images.length) {
-                showSummary();
-                return;
-            }
-            const filename = images[currentIndex];
-            // Cache buster to prevent stale images
-            imageViewer.src = `/data/train/images/${filename}?t=${Date.now()}`;
-            filenameDisplay.textContent = filename;
-            currentIdxDisplay.textContent = currentIndex + 1;
-        }
+<script>
+  const API = '';
 
-        function handleKeyPress(e) {
-            if (currentIndex >= images.length) return;
+  // ── State ──────────────────────────────────────────────────────────────────────
+  let images       = [];   // [{name, decision}]
+  let currentIndex = 0;
+  let isResumed    = false;
 
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                triggerFlash(flashPass);
-                nextImage();
-            } else if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                nextImage();
-            } else if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                prevImage();
-            } else if (e.key === 'Delete' || e.key === 'Backspace') {
-                e.preventDefault();
-                rejectedImages.push(images[currentIndex]);
-                triggerFlash(flashReject);
-                nextImage();
-            }
-        }
+  // ── Boot ───────────────────────────────────────────────────────────────────────
+  (async () => {
+    await loadImages();
+    await refreshStats();
+  })();
 
-        function triggerFlash(el) {
-            el.classList.remove('opacity-0');
-            setTimeout(() => {
-                el.classList.add('opacity-0');
-            }, 150);
-        }
+  async function loadImages() {
+    try {
+      const res = await fetch(`${API}/api/review/images`);
+      const data = await res.json();
+      images = data.images;
 
-        function prevImage() {
-            if (currentIndex > 0) {
-                currentIndex--;
-                const filename = images[currentIndex];
-                rejectedImages = rejectedImages.filter(img => img !== filename); // เคลียร์สถานะ Reject เดิมออก (Undo)
-                renderImage();
-            }
-        }
+      show('loading-screen', false);
 
-        function nextImage() {
-            currentIndex++;
-            renderImage();
-        }
+      if (images.length === 0) {
+        show('empty-screen', true);
+        return;
+      }
 
-        function showSummary() {
-            document.removeEventListener('keydown', handleKeyPress);
-            reviewScreen.classList.add('hidden');
-            reviewScreen.classList.remove('flex');
-            
-            summaryScreen.classList.remove('hidden');
-            summaryScreen.classList.add('flex');
-            
-            document.getElementById('reject-count').textContent = rejectedImages.length;
-            
-            if (rejectedImages.length === 0) {
-                document.getElementById('reject-list').innerHTML = '<span class="text-emerald-500">No images were rejected. Everything is perfect!</span>';
-                document.getElementById('confirm-btn').classList.add('hidden');
-            } else {
-                document.getElementById('reject-list').innerHTML = rejectedImages.join('<br>');
-            }
-        }
+      // Check if any images have previous decisions (resume mode)
+      const decided = images.filter(i => i.decision !== 'pending');
+      const pending  = images.filter(i => i.decision === 'pending');
+      isResumed = decided.length > 0;
 
-        async function confirmDeletion() {
-            const btn = document.getElementById('confirm-btn');
-            btn.disabled = true;
-            btn.textContent = 'Deleting...';
-            
-            try {
-                const res = await fetch('/api/review/delete', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filenames: rejectedImages })
-                });
-                const data = await res.json();
-                
-                if (data.status === 'success') {
-                    document.getElementById('reject-list').innerHTML = `<span class="text-emerald-500 font-bold">Successfully deleted ${data.deleted} images and labels.</span>`;
-                    btn.classList.add('hidden');
-                } else {
-                    btn.textContent = 'Error';
-                }
-            } catch (err) {
-                console.error(err);
-                btn.textContent = 'Failed!';
-            }
-        }
+      // Find the first unreviewed image to start from
+      currentIndex = images.findIndex(i => i.decision === 'pending');
+      if (currentIndex === -1) {
+        // All done already
+        show('done-screen', true);
+        updateDoneStats();
+        return;
+      }
 
-        // Boot
-        fetchImages();
-    </script>
+      if (isResumed) {
+        document.getElementById('resume-badge').style.display = 'inline';
+      }
+
+      show('review-screen', true);
+      document.addEventListener('keydown', onKey);
+      renderCurrent();
+
+    } catch(e) {
+      document.getElementById('loading-screen').textContent = '❌ โหลดรูปภาพไม่ได้ ตรวจสอบว่า server กำลังรัน';
+    }
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────────
+  function renderCurrent() {
+    if (currentIndex < 0 || currentIndex >= images.length) return;
+
+    const item     = images[currentIndex];
+    const img      = document.getElementById('img-display');
+    const stamp    = document.getElementById('stamp');
+
+    img.style.opacity = '0.6';
+    img.src = `${API}/api/review/image/${encodeURIComponent(item.name)}?t=${Date.now()}`;
+    img.onload = () => { img.style.opacity = '1'; };
+
+    document.getElementById('filename-text').textContent = item.name;
+    document.getElementById('img-counter').textContent =
+      `${currentIndex + 1} / ${images.length}`;
+
+    // Stamp overlay for already-decided images
+    stamp.className = '';
+    if (item.decision === 'accept') {
+      stamp.textContent = '✅ เอาแล้ว';
+      stamp.className = 'accept';
+    } else if (item.decision === 'reject') {
+      stamp.textContent = '🗑️ ลบแล้ว';
+      stamp.className = 'reject';
+    }
+
+    updateProgress();
+  }
+
+  function updateProgress() {
+    const decided = images.filter(i => i.decision !== 'pending').length;
+    const pct     = images.length > 0 ? (decided / images.length * 100) : 0;
+    document.getElementById('progress-bar-fill').style.width = pct + '%';
+    document.getElementById('progress-label').textContent =
+      `ดำเนินการแล้ว ${decided} / ${images.length} รูป`;
+  }
+
+  // ── Decision ───────────────────────────────────────────────────────────────────
+  async function decide(action) {
+    const item = images[currentIndex];
+    if (!item) return;
+
+    // Flash animation
+    const flashEl = document.getElementById(action === 'accept' ? 'flash-accept' : 'flash-reject');
+    flashEl.classList.add('show');
+    setTimeout(() => flashEl.classList.remove('show'), 180);
+
+    // Optimistic update
+    item.decision = action;
+    renderCurrent();
+
+    // Persist to server
+    try {
+      await fetch(`${API}/api/review/decide`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: item.name, action }),
+      });
+    } catch(e) {
+      showToast('⚠️ บันทึกไม่ได้ ตรวจสอบ server', 3000);
+    }
+
+    await refreshStats();
+    goNext();
+  }
+
+  // ── Navigation ─────────────────────────────────────────────────────────────────
+  function goNext() {
+    if (currentIndex < images.length - 1) {
+      currentIndex++;
+      renderCurrent();
+    } else {
+      // Reached the end — check if any pending remain
+      const firstPending = images.findIndex(i => i.decision === 'pending');
+      if (firstPending === -1) {
+        showDone();
+      } else {
+        showToast(`ยังมี ${images.filter(i=>i.decision==='pending').length} รูปที่ยังไม่ได้คัด`, 2500);
+        currentIndex = firstPending;
+        renderCurrent();
+      }
+    }
+  }
+
+  function goPrev() {
+    if (currentIndex > 0) {
+      currentIndex--;
+      renderCurrent();
+    }
+  }
+
+  // ── Done screen ────────────────────────────────────────────────────────────────
+  function showDone() {
+    document.removeEventListener('keydown', onKey);
+    show('review-screen', false);
+    show('done-screen', true);
+    updateDoneStats();
+  }
+
+  function updateDoneStats() {
+    const accepted = images.filter(i => i.decision === 'accept').length;
+    const rejected = images.filter(i => i.decision === 'reject').length;
+    document.getElementById('done-accepted').textContent = accepted;
+    document.getElementById('done-rejected').textContent = rejected;
+  }
+
+  async function resetAndReload() {
+    await fetch(`${API}/api/review/reset`, { method: 'POST' });
+    location.reload();
+  }
+
+  // ── Stats refresh ──────────────────────────────────────────────────────────────
+  async function refreshStats() {
+    try {
+      const res  = await fetch(`${API}/api/review/stats`);
+      const data = await res.json();
+      document.getElementById('hs-remaining').textContent = data.remaining;
+      document.getElementById('hs-accepted').textContent  = data.accepted;
+      document.getElementById('hs-rejected').textContent  = data.rejected;
+    } catch(e) {}
+  }
+
+  // ── Keyboard ───────────────────────────────────────────────────────────────────
+  function onKey(e) {
+    if (e.target.tagName === 'INPUT') return;
+    switch(e.key) {
+      case 'Enter':
+      case 'ArrowRight':
+        e.preventDefault(); decide('accept'); break;
+      case 'Delete':
+      case 'Backspace':
+        e.preventDefault(); decide('reject'); break;
+      case 'ArrowLeft':
+        e.preventDefault(); goPrev(); break;
+      case ' ':
+        e.preventDefault(); goNext(); break;
+    }
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────────
+  function show(id, visible) {
+    const el = document.getElementById(id);
+    el.classList.toggle('active', visible);
+  }
+
+  let toastTimer;
+  function showToast(msg, ms = 2500) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), ms);
+  }
+
+  // Refresh stats every 10s (in case pipeline adds new images in background)
+  setInterval(refreshStats, 10000);
+</script>
 </body>
 </html>

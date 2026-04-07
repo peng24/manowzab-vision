@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 
 from app.config import settings
+from app.utils.vision_analyzer import analyze_clothing
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +87,22 @@ def send_product_event(
 ) -> None:
     """
     บันทึกผลลงไฟล์ในเครื่อง (results.json) ในโฟลเดอร์ตามวันที่โดย dynamic
+    วิเคราะห์สีและประเภทเสื้อผ้าด้วย Ollama Vision ก่อนส่ง payload
     """
+    # ── Vision Analysis ──────────────────────────────────────────
+    if image_path is not None and image_path.exists():
+        logger.info("[Webhook] 🔍 ส่งภาพไปวิเคราะห์ด้วย Ollama Vision: %s", image_path)
+        clothing_info = analyze_clothing(str(image_path))
+        product = {**product, **clothing_info}  # merge color + type into product
+        logger.info(
+            "[Webhook] 👗 ผลวิเคราะห์ → color=%s, type=%s",
+            clothing_info.get("color"),
+            clothing_info.get("type"),
+        )
+    else:
+        logger.warning("[Webhook] ⚠️ ไม่มีภาพให้วิเคราะห์ — ข้ามขั้นตอน Vision Analysis")
+
     payload = _build_payload(product, image_path, session_id)
-    
+
     # 1. เก็บรูปลงเครื่องอยู่แล้ว + เพิ่มการเก็บ JSON ลงเครื่อง (Root folder)
     _save_local_result(payload, output_dir=output_dir)
